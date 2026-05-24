@@ -14,6 +14,8 @@ from job_tools import (
     send_email_report,
     save_reported_jobs,
     mark_report_complete_today,
+    get_most_recent_job_report,
+    email_most_recent_job_report,
 )
 
 from memory_tools import (
@@ -72,6 +74,19 @@ Memory rules:
 - Do not claim you remembered something unless you successfully called a memory tool.
 - If the user asks what you remember, call read_agent_memory.
 - If the user asks you to forget something, call forget_memory_item if they provide an ID. If they do not provide an ID, show the relevant memories first.
+
+Resume rules:
+- Candidate profile is loaded through load_candidate_profile.
+- The resume may come from profile/resume.pdf or cached profile/resume.txt.
+- If the user says they updated the resume PDF, call refresh_resume_from_pdf before future scoring.
+- Never score jobs without loading the candidate profile first.
+
+Existing report rules:
+- If the user asks to email, resend, show, load, or use the most recent existing job report, call get_most_recent_job_report or email_most_recent_job_report.
+- Do not scrape jobs when the user asks to send an email.
+- check_report_sent_today only tells whether today's scheduled report was sent. It does not tell whether a saved report exists.
+- If the user asks to email the most recent report, use email_most_recent_job_report directly.
+- If no saved report exists, say that no saved report exists. Do not create a new one unless the user asks.
 """
 
 
@@ -80,11 +95,16 @@ def create_job_agent():
         check_report_sent_today,
         load_candidate_profile,
         read_agent_memory,
+
+        get_most_recent_job_report,
+        email_most_recent_job_report,
+
         remember_job_preference,
         remember_company_feedback,
         remember_role_feedback,
         remember_job_feedback,
         forget_memory_item,
+
         scrape_linkedin_jobs_tool,
         filter_seen_jobs,
         score_jobs_against_profile,

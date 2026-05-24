@@ -54,3 +54,32 @@ def save_report(report_text):
         file.write(report_text)
 
     return str(path)
+
+def get_latest_report_path():
+    report_files = sorted(
+        REPORTS_DIR.glob("*.md"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True
+    )
+
+    if not report_files:
+        return None
+
+    return report_files[0]
+
+
+def load_latest_report():
+    latest_path = get_latest_report_path()
+
+    if latest_path is None:
+        return {
+            "found": False,
+            "report_path": None,
+            "report": None
+        }
+
+    return {
+        "found": True,
+        "report_path": str(latest_path),
+        "report": latest_path.read_text(encoding="utf-8")
+    }

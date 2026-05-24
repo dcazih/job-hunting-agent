@@ -5,3 +5,5 @@ data/
 reports/
 *.log
 .DS_Store
+*.csv
+resume.txt
