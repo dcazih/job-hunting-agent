@@ -1,0 +1,9 @@
+langchain
+langchain-openai
+langgraph
+pydantic
+python-dotenv
+pandas
+requests
+beautifulsoup4
+pymupdf
