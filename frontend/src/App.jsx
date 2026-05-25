@@ -120,16 +120,12 @@ function formatSearchStep(step) {
   if (normalized.includes("description")) return "Getting Descriptions";
   if (normalized.includes("score")) return "Scoring Jobs";
   if (normalized.includes("report")) return "Creating Report";
-  const fallbackWords = [
-    "Searching",
-    "Working",
-    "Hunting",
-    "Seeking",
-    "Inquiring",
-    "Rummaging",
-  ];
-  const seed = normalized.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
-  return `${fallbackWords[seed % fallbackWords.length]}...`;
+  return "";
+}
+
+function isSearchIntent(message) {
+  const text = String(message || "").trim().toLowerCase();
+  return /^(run|search|hunt|start search|start hunt|find jobs)\b/.test(text);
 }
 
 function ResumePresentIcon({ className = "" }) {
@@ -144,6 +140,7 @@ function ResumePresentIcon({ className = "" }) {
 }
 
 export default function App() {
+  const loadingWords = ["Searching", "Working", "Hunting", "Seeking", "Inquiring", "Rummaging"];
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [collapsedHoverArmed, setCollapsedHoverArmed] = useState(false);
   const [collapsedHoverActive, setCollapsedHoverActive] = useState(false);
@@ -175,6 +172,7 @@ export default function App() {
   const [resumePlusClosing, setResumePlusClosing] = useState(false);
   const [floatingTooltip, setFloatingTooltip] = useState({ visible: false, text: "", top: 0, left: 0, placement: "left" });
   const [pulsingResumeName, setPulsingResumeName] = useState("");
+  const [randomLoadingWord, setRandomLoadingWord] = useState("Searching");
 
   const messageRefs = useRef({});
   const chatContentRef = useRef(null);
@@ -195,6 +193,15 @@ export default function App() {
   useEffect(() => {
     runIdRef.current = runId;
   }, [runId]);
+
+  useEffect(() => {
+    if (runState?.status !== "running") return;
+    const timer = setInterval(() => {
+      const next = loadingWords[Math.floor(Math.random() * loadingWords.length)];
+      setRandomLoadingWord(next);
+    }, 5500);
+    return () => clearInterval(timer);
+  }, [runState?.status]);
 
   function appendText(text, role = "assistant", focusBlock = null) {
     const newId = crypto.randomUUID();
@@ -502,9 +509,23 @@ export default function App() {
       resizeBottomComposerTextarea();
     });
     setBusy(true);
-    setRunState({ status: "running", step: "Fetching jobs", progress: 0 });
 
     try {
+      if (!isSearchIntent(trimmed)) {
+        const abortController = new AbortController();
+        chatAbortRef.current = abortController;
+        const payload = await api("/api/chat", {
+          method: "POST",
+          body: JSON.stringify({ message: trimmed }),
+          signal: abortController.signal,
+        });
+        chatAbortRef.current = null;
+        appendText(payload.assistant_message || "Done.", "assistant", "start");
+        setBusy(false);
+        return;
+      }
+
+      setRunState({ status: "running", step: "Fetching jobs", progress: 0 });
       const abortController = new AbortController();
       chatAbortRef.current = abortController;
       const payload = await api("/api/search/run", {
@@ -1108,7 +1129,7 @@ export default function App() {
 
           {runState?.status === "running" && (
             <div className="chat-message assistant">
-              <div className="assistant-text status-shimmer">{formatSearchStep(runState.step)}</div>
+              <div className="assistant-text status-shimmer">{formatSearchStep(runState.step) || `${randomLoadingWord}...`}</div>
             </div>
           )}
         </div>
