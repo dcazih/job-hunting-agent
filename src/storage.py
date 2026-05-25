@@ -1,13 +1,16 @@
 from pathlib import Path
 from datetime import datetime
 import json
+import os
 
 
-DATA_DIR = Path("data")
-REPORTS_DIR = Path("reports")
+ROOT_DIR = Path(__file__).resolve().parent.parent
+RUNTIME_ROOT = Path(os.getenv("APP_RUNTIME_DIR", "/tmp/job-hunting-agent" if os.getenv("VERCEL") else str(ROOT_DIR)))
+DATA_DIR = RUNTIME_ROOT / "data"
+REPORTS_DIR = RUNTIME_ROOT / "reports"
 
-DATA_DIR.mkdir(exist_ok=True)
-REPORTS_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
 RUN_STATE_FILE = DATA_DIR / "last_successful_report_date.txt"

@@ -136,7 +136,7 @@ def fetch_job_description(job_id):
 
     return description_el.get_text(separator="\n", strip=True)
 
-def scrape_jobs(keywords="software engineer", location="United States", pages=2):
+def scrape_jobs(keywords="software engineer", location="United States", pages=2, is_canceled=None):
     """
     Scrapes multiple result pages.
 
@@ -146,6 +146,8 @@ def scrape_jobs(keywords="software engineer", location="United States", pages=2)
     all_jobs = []
 
     for page in range(pages):
+        if callable(is_canceled) and is_canceled():
+            raise RuntimeError("Search was canceled by user.")
         start = page * 25
         print(f"Fetching page {page + 1}, start={start}...")
         
@@ -156,15 +158,37 @@ def scrape_jobs(keywords="software engineer", location="United States", pages=2)
 
         # Get descriptions of found jobs
         for job in jobs:
+            if callable(is_canceled) and is_canceled():
+                raise RuntimeError("Search was canceled by user.")
             print(f"Fetching description: {job['title']} at {job['company']}")
 
             job["description"] = fetch_job_description(job["job_id"])
 
-            time.sleep(random.uniform(2, 5))
+            sleep_secs = random.uniform(2, 5)
+            if callable(is_canceled):
+                slept = 0.0
+                while slept < sleep_secs:
+                    if is_canceled():
+                        raise RuntimeError("Search was canceled by user.")
+                    step = min(0.25, sleep_secs - slept)
+                    time.sleep(step)
+                    slept += step
+            else:
+                time.sleep(sleep_secs)
 
         all_jobs.extend(jobs)
 
-        time.sleep(random.uniform(3, 7))  # Prevents endpoint hammering.
+        sleep_secs = random.uniform(3, 7)  # Prevents endpoint hammering.
+        if callable(is_canceled):
+            slept = 0.0
+            while slept < sleep_secs:
+                if is_canceled():
+                    raise RuntimeError("Search was canceled by user.")
+                step = min(0.25, sleep_secs - slept)
+                time.sleep(step)
+                slept += step
+        else:
+            time.sleep(sleep_secs)
 
     # Deduplicate by job_id or URL
     seen = set()

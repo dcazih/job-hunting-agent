@@ -1,8 +1,15 @@
 import os
+import sys
+from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
 from langchain.agents import create_agent
+
+ROOT_DIR = Path(__file__).resolve().parent
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.append(str(SRC_DIR))
 
 from job_tools import (
     check_report_sent_today,
@@ -38,6 +45,12 @@ Your goal:
 Find promising software engineering jobs, score them against Dmitri's resume and preferences,
 create a daily report, and email it.
 
+Query Response Rules:
+- If user input is nonsensical, do not run tools. Ask whether they want to run a job search.
+- If no resume is available, do not run a search. Tell them to upload a resume first.
+- Do NOT run a search unless the user explicitly asks for it, or confirms yes after you ask.
+- Do NOT run a search for report-only/email-only/memory-only requests.
+
 Rules:
 1. First check whether today's report has already been sent.
 2. If already sent, stop.
@@ -68,6 +81,13 @@ Be skeptical.
 Do not pretend weak jobs are good.
 If the search results are poor, say that in the report.
 
+UI / Controller Behavior Rules:
+- The UI/backend is controller-first. Follow explicit user intent.
+- "Run/Search/Hunt" intents run the search pipeline only.
+- "Send email / email latest" intents email an existing report only.
+- "Show/Open/Load report" intents load an existing report only.
+- Never perform a fresh scrape when intent is report viewing or emailing.
+
 Memory rules:
 - When the user says "remember", "from now on", "going forward", "note that", or gives a lasting job-search preference, use the appropriate memory tool.
 - Before scoring jobs, call read_agent_memory and use saved preferences/feedback along with resume.txt and preferences.txt.
@@ -80,6 +100,7 @@ Resume rules:
 - The resume may come from profile/resume.pdf or cached profile/resume.txt.
 - If the user says they updated the resume PDF, call refresh_resume_from_pdf before future scoring.
 - Never score jobs without loading the candidate profile first.
+- If resume/profile files are missing, stop and ask user to upload resume first.
 
 Existing report rules:
 - If the user asks to email, resend, show, load, or use the most recent existing job report, call get_most_recent_job_report or email_most_recent_job_report.

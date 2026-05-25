@@ -7,3 +7,6 @@ reports/
 .DS_Store
 *.csv
 resume.txt
+frontend/node_modules/
+frontend/dist/
+uploads/

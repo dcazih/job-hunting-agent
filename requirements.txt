@@ -3,6 +3,9 @@ langchain-openai
 langgraph
 pydantic
 python-dotenv
+fastapi
+uvicorn
+python-multipart
 pandas
 requests
 beautifulsoup4

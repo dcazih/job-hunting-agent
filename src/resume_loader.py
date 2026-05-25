@@ -1,8 +1,12 @@
 from pathlib import Path
+import os
 import pymupdf
 
 
-PROFILE_DIR = Path("profile")
+ROOT_DIR = Path(__file__).resolve().parent.parent
+RUNTIME_ROOT = Path(os.getenv("APP_RUNTIME_DIR", "/tmp/job-hunting-agent" if os.getenv("VERCEL") else str(ROOT_DIR)))
+PROFILE_DIR = RUNTIME_ROOT / "profile"
+PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_RESUME_PDF = PROFILE_DIR / "resume.pdf"
 DEFAULT_RESUME_TXT = PROFILE_DIR / "resume.txt"
 DEFAULT_PREFERENCES = PROFILE_DIR / "preferences.txt"

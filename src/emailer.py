@@ -73,8 +73,9 @@ def markdown_to_html(markdown_text: str) -> str:
 </html>
 """
 
-def send_email(subject, body):
-    if not EMAIL_FROM or not EMAIL_TO or not GMAIL_APP_PASSWORD:
+def send_email(subject, body, to_email=None):
+    recipient = (to_email or EMAIL_TO).strip()
+    if not EMAIL_FROM or not recipient or not GMAIL_APP_PASSWORD:
         return {
             "status": "failed",
             "error": "Missing EMAIL_FROM, EMAIL_TO, or GMAIL_APP_PASSWORD"
@@ -84,7 +85,7 @@ def send_email(subject, body):
 
     message = EmailMessage()
     message["From"] = EMAIL_FROM
-    message["To"] = EMAIL_TO
+    message["To"] = recipient
     message["Subject"] = subject
 
     # Plain text fallback
@@ -100,7 +101,7 @@ def send_email(subject, body):
 
         return {
             "status": "sent",
-            "to": EMAIL_TO,
+            "to": recipient,
             "subject": subject,
         }
 

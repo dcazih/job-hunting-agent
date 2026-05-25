@@ -2,10 +2,13 @@ from pathlib import Path
 from datetime import datetime
 import json
 import uuid
+import os
 
 
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
+ROOT_DIR = Path(__file__).resolve().parent.parent
+RUNTIME_ROOT = Path(os.getenv("APP_RUNTIME_DIR", "/tmp/job-hunting-agent" if os.getenv("VERCEL") else str(ROOT_DIR)))
+DATA_DIR = RUNTIME_ROOT / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 MEMORY_FILE = DATA_DIR / "agent_memory.json"
 

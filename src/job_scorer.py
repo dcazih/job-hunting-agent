@@ -90,10 +90,12 @@ Description:
     return result.model_dump()
 
 
-def score_jobs(jobs, resume_text, preferences_text):
+def score_jobs(jobs, resume_text, preferences_text, is_canceled=None):
     scored_jobs = []
 
     for index, job in enumerate(jobs, start=1):
+        if callable(is_canceled) and is_canceled():
+            raise RuntimeError("Search was canceled by user.")
         print(f"Scoring {index}/{len(jobs)}: {job.get('title')} at {job.get('company')}")
 
         try:
