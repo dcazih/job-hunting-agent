@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from threading import Lock
@@ -117,10 +117,9 @@ def write_preferences(payload: PreferencesRequest) -> dict:
 
 
 @app.post("/api/search/run")
-def run_search(payload: SearchRunRequest, background_tasks: BackgroundTasks) -> dict:
+def run_search(payload: SearchRunRequest) -> dict:
     run_id = create_search_run()
-    background_tasks.add_task(
-        execute_search_run,
+    execute_search_run(
         run_id,
         keywords=payload.keywords,
         location=payload.location,
