@@ -64,9 +64,27 @@ def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _run_progress_key(run_id: str) -> str:
+    return f"runs.progress.{run_id}"
+
+
+def _run_cancel_key(run_id: str) -> str:
+    return f"runs.cancel.{run_id}"
+
+
 def _set_progress(run_id: str, *, status: str, progress: int, step: str, result: dict[str, Any] | None = None, error: str | None = None) -> None:
+    completed_at: str | None = None
     with RUNS_LOCK:
-        existing = SEARCH_RUNS[run_id]
+        existing = SEARCH_RUNS.get(run_id)
+        if existing is None:
+            existing = SearchProgress(
+                run_id=run_id,
+                status="queued",
+                progress=0,
+                step="Queued",
+                started_at=_now_iso(),
+            )
+            SEARCH_RUNS[run_id] = existing
         existing.status = status
         existing.progress = progress
         existing.step = step
@@ -74,14 +92,41 @@ def _set_progress(run_id: str, *, status: str, progress: int, step: str, result:
         existing.error = error
         if status in {"complete", "failed"}:
             existing.completed_at = _now_iso()
+        completed_at = existing.completed_at
+        started_at = existing.started_at
+
+    if cloud_enabled():
+        cloud_set_json(
+            _run_progress_key(run_id),
+            {
+                "run_id": run_id,
+                "status": status,
+                "progress": progress,
+                "step": step,
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "result": result,
+                "error": error,
+            },
+        )
 
 
 def _is_canceled(run_id: str) -> bool:
+    if cloud_enabled():
+        return bool(cloud_get_json(_run_cancel_key(run_id), False))
     with RUNS_LOCK:
         return run_id in CANCEL_REQUESTS
 
 
 def cancel_search_run(run_id: str) -> dict[str, Any]:
+    if cloud_enabled():
+        run = cloud_get_json(_run_progress_key(run_id), None)
+        if not run:
+            raise ValueError("Run not found")
+        cloud_set_json(_run_cancel_key(run_id), True)
+        _set_progress(run_id, status="failed", progress=100, step="Canceled", error="Search was canceled by user.")
+        return {"status": "cancel_requested", "run_id": run_id}
+
     with RUNS_LOCK:
         run = SEARCH_RUNS.get(run_id)
         if run is None:
@@ -99,18 +144,39 @@ def _guard_canceled(run_id: str) -> None:
 
 def create_search_run() -> str:
     run_id = uuid.uuid4().hex
+    started_at = _now_iso()
     with RUNS_LOCK:
         SEARCH_RUNS[run_id] = SearchProgress(
             run_id=run_id,
             status="queued",
             progress=0,
             step="Queued",
-            started_at=_now_iso(),
+            started_at=started_at,
         )
+    if cloud_enabled():
+        cloud_set_json(
+            _run_progress_key(run_id),
+            {
+                "run_id": run_id,
+                "status": "queued",
+                "progress": 0,
+                "step": "Queued",
+                "started_at": started_at,
+                "completed_at": None,
+                "result": None,
+                "error": None,
+            },
+        )
+        cloud_set_json(_run_cancel_key(run_id), False)
     return run_id
 
 
 def get_search_run(run_id: str) -> dict[str, Any] | None:
+    if cloud_enabled():
+        run = cloud_get_json(_run_progress_key(run_id), None)
+        if run is None:
+            return None
+        return run
     with RUNS_LOCK:
         run = SEARCH_RUNS.get(run_id)
         return asdict(run) if run else None
@@ -440,6 +506,8 @@ def execute_search_run(run_id: str, *, keywords: str, location: str, pages: int)
         if not _is_canceled(run_id):
             _set_progress(run_id, status="failed", progress=100, step="Failed", error=str(error))
     finally:
+        if cloud_enabled():
+            cloud_set_json(_run_cancel_key(run_id), False)
         with RUNS_LOCK:
             CANCEL_REQUESTS.discard(run_id)
 
