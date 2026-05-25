@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime
 import json
 import os
+from cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -17,6 +18,9 @@ RUN_STATE_FILE = DATA_DIR / "last_successful_report_date.txt"
 
 
 def load_seen_job_ids():
+    if cloud_enabled():
+        payload = cloud_get_json("jobs.seen_ids", [])
+        return set(payload or [])
     if not SEEN_JOBS_FILE.exists():
         return set()
 
@@ -27,6 +31,11 @@ def load_seen_job_ids():
 
 
 def save_seen_job_ids(job_ids):
+    if cloud_enabled():
+        existing = set(cloud_get_json("jobs.seen_ids", []) or [])
+        updated = sorted(list(existing.union(set(job_ids))))
+        cloud_set_json("jobs.seen_ids", updated)
+        return
     existing = load_seen_job_ids()
     updated = existing.union(set(job_ids))
 
@@ -36,6 +45,9 @@ def save_seen_job_ids(job_ids):
 
 def already_sent_today():
     today = datetime.now().strftime("%Y-%m-%d")
+    if cloud_enabled():
+        last_date = str(cloud_get_json("reports.last_successful_date", "") or "").strip()
+        return last_date == today
 
     if not RUN_STATE_FILE.exists():
         return False
@@ -46,6 +58,9 @@ def already_sent_today():
 
 def mark_sent_today():
     today = datetime.now().strftime("%Y-%m-%d")
+    if cloud_enabled():
+        cloud_set_json("reports.last_successful_date", today)
+        return
     RUN_STATE_FILE.write_text(today, encoding="utf-8")
 
 

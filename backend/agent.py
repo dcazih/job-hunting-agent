@@ -25,6 +25,7 @@ from linkedin_scraper import scrape_jobs
 from memory_store import add_job_feedback, memory_as_text
 from resume_loader import DEFAULT_PREFERENCES, DEFAULT_RESUME_PDF, DEFAULT_RESUME_TXT, load_candidate_profile, refresh_resume_text_from_pdf
 from storage import load_latest_report, mark_sent_today, save_report, save_seen_job_ids, load_seen_job_ids
+from cloud_state import enabled as cloud_enabled, set_json as cloud_set_json, get_json as cloud_get_json
 
 
 RUNTIME_ROOT = Path(os.getenv("APP_RUNTIME_DIR", "/tmp/job-hunting-agent" if os.getenv("VERCEL") else str(ROOT_DIR)))
@@ -170,7 +171,10 @@ def save_preferences(preferences: str) -> dict[str, Any]:
     if not text:
         raise ValueError("Preferences text cannot be empty.")
 
-    DEFAULT_PREFERENCES.write_text(text, encoding="utf-8")
+    if cloud_enabled():
+        cloud_set_json("profile.preferences", text)
+    else:
+        DEFAULT_PREFERENCES.write_text(text, encoding="utf-8")
 
     return {
         "status": "saved",
@@ -180,6 +184,9 @@ def save_preferences(preferences: str) -> dict[str, Any]:
 
 
 def get_preferences() -> dict[str, Any]:
+    if cloud_enabled():
+        text = str(cloud_get_json("profile.preferences", "") or "")
+        return {"found": bool(text.strip()), "preferences": text}
     if not DEFAULT_PREFERENCES.exists():
         return {"found": False, "preferences": ""}
 
@@ -197,6 +204,8 @@ def get_resume_status() -> dict[str, Any]:
 
 
 def _load_active_upload_name() -> str:
+    if cloud_enabled():
+        return str(cloud_get_json("resume.active_upload_name", "") or "").strip()
     if not RESUME_STATE_PATH.exists():
         return ""
     try:
@@ -207,6 +216,9 @@ def _load_active_upload_name() -> str:
 
 
 def _set_active_upload_name(name: str) -> None:
+    if cloud_enabled():
+        cloud_set_json("resume.active_upload_name", name)
+        return
     RESUME_STATE_PATH.write_text(json.dumps({"active_upload_name": name}), encoding="utf-8")
 
 

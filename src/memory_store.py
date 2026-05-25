@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import uuid
 import os
+from cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -32,6 +33,12 @@ def make_id(prefix):
 
 
 def load_memory():
+    if cloud_enabled():
+        data = cloud_get_json("memory.store", DEFAULT_MEMORY.copy()) or DEFAULT_MEMORY.copy()
+        for key, value in DEFAULT_MEMORY.items():
+            if key not in data:
+                data[key] = value
+        return data
     if not MEMORY_FILE.exists():
         save_memory(DEFAULT_MEMORY)
         return DEFAULT_MEMORY.copy()
@@ -48,6 +55,9 @@ def load_memory():
 
 
 def save_memory(memory):
+    if cloud_enabled():
+        cloud_set_json("memory.store", memory)
+        return
     with open(MEMORY_FILE, "w", encoding="utf-8") as file:
         json.dump(memory, file, indent=2)
 
