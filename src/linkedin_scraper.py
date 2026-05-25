@@ -1,7 +1,6 @@
 import time
 import random
 import requests
-import pandas as pd
 from bs4 import BeautifulSoup
 from urllib.parse import urlencode
 
@@ -207,6 +206,8 @@ def scrape_jobs(keywords="software engineer", location="United States", pages=2,
 
 
 if __name__ == "__main__":
+    import pandas as pd
+
     jobs = scrape_jobs(
         keywords="software engineer",
         location="United States",
