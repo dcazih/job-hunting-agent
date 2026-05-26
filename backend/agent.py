@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -58,10 +60,190 @@ class SearchProgress:
 SEARCH_RUNS: dict[str, SearchProgress] = {}
 RUNS_LOCK = threading.Lock()
 CANCEL_REQUESTS: set[str] = set()
+SCHEDULE_LOCK = threading.Lock()
+SCHEDULE_PATH = DATA_DIR / "schedule_config.json"
+SCHEDULER_THREAD: threading.Thread | None = None
+SCHEDULER_STOP = threading.Event()
+SCHEDULE_DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+DEFAULT_SCHEDULE: dict[str, Any] = {
+    "enabled": False,
+    "time": "09:00",
+    "days": {day: day in {"mon", "tue", "wed", "thu", "fri"} for day in SCHEDULE_DAY_KEYS},
+    "keywords": "software engineer",
+    "location": "United States",
+    "pages": 2,
+    "email_to": "",
+    "last_triggered_slot": "",
+}
 
 
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _normalize_days(days: Any) -> dict[str, bool]:
+    normalized = {day: False for day in SCHEDULE_DAY_KEYS}
+    if isinstance(days, dict):
+        for day in SCHEDULE_DAY_KEYS:
+            normalized[day] = bool(days.get(day, False))
+    return normalized
+
+
+def _normalize_time(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", raw):
+        return DEFAULT_SCHEDULE["time"]
+    return raw
+
+
+def _normalize_schedule(payload: Any, previous: dict[str, Any] | None = None) -> dict[str, Any]:
+    base = dict(DEFAULT_SCHEDULE)
+    if previous:
+        base.update(previous)
+        base["days"] = _normalize_days(previous.get("days", {}))
+
+    if isinstance(payload, dict):
+        if "enabled" in payload:
+            base["enabled"] = bool(payload.get("enabled"))
+        if "time" in payload:
+            base["time"] = _normalize_time(payload.get("time"))
+        if "days" in payload:
+            base["days"] = _normalize_days(payload.get("days"))
+        if "keywords" in payload:
+            base["keywords"] = str(payload.get("keywords") or "").strip() or DEFAULT_SCHEDULE["keywords"]
+        if "location" in payload:
+            base["location"] = str(payload.get("location") or "").strip() or DEFAULT_SCHEDULE["location"]
+        if "pages" in payload:
+            try:
+                pages = int(payload.get("pages"))
+            except (TypeError, ValueError):
+                pages = DEFAULT_SCHEDULE["pages"]
+            base["pages"] = max(1, min(10, pages))
+        if "email_to" in payload:
+            base["email_to"] = str(payload.get("email_to") or "").strip()
+        if "last_triggered_slot" in payload:
+            base["last_triggered_slot"] = str(payload.get("last_triggered_slot") or "").strip()
+
+    if not any(base["days"].values()):
+        base["enabled"] = False
+    return base
+
+
+def _get_stored_schedule() -> dict[str, Any]:
+    if cloud_enabled():
+        stored = cloud_get_json("scheduler.config", None)
+        return _normalize_schedule(stored, None)
+
+    if not SCHEDULE_PATH.exists():
+        schedule = _normalize_schedule({}, None)
+        SCHEDULE_PATH.write_text(json.dumps(schedule, indent=2), encoding="utf-8")
+        return schedule
+
+    try:
+        stored = json.loads(SCHEDULE_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        stored = {}
+    schedule = _normalize_schedule(stored, None)
+    SCHEDULE_PATH.write_text(json.dumps(schedule, indent=2), encoding="utf-8")
+    return schedule
+
+
+def _save_stored_schedule(schedule: dict[str, Any]) -> None:
+    if cloud_enabled():
+        cloud_set_json("scheduler.config", schedule)
+        return
+    SCHEDULE_PATH.write_text(json.dumps(schedule, indent=2), encoding="utf-8")
+
+
+def _public_schedule(schedule: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "enabled": bool(schedule.get("enabled", False)),
+        "time": _normalize_time(schedule.get("time", DEFAULT_SCHEDULE["time"])),
+        "days": _normalize_days(schedule.get("days", {})),
+        "keywords": str(schedule.get("keywords", DEFAULT_SCHEDULE["keywords"])),
+        "location": str(schedule.get("location", DEFAULT_SCHEDULE["location"])),
+        "pages": int(schedule.get("pages", DEFAULT_SCHEDULE["pages"])),
+        "email_to": str(schedule.get("email_to", DEFAULT_SCHEDULE["email_to"])),
+    }
+
+
+def get_search_schedule() -> dict[str, Any]:
+    with SCHEDULE_LOCK:
+        schedule = _get_stored_schedule()
+        return _public_schedule(schedule)
+
+
+def save_search_schedule(payload: dict[str, Any]) -> dict[str, Any]:
+    with SCHEDULE_LOCK:
+        current = _get_stored_schedule()
+        schedule = _normalize_schedule(payload, current)
+        _save_stored_schedule(schedule)
+        return _public_schedule(schedule)
+
+
+def _has_active_run() -> bool:
+    with RUNS_LOCK:
+        for run in SEARCH_RUNS.values():
+            if run.status in {"queued", "running"}:
+                return True
+    return False
+
+
+def _run_scheduled_search(schedule: dict[str, Any]) -> None:
+    run_id = create_search_run()
+    execute_search_run(
+        run_id,
+        keywords=schedule.get("keywords", DEFAULT_SCHEDULE["keywords"]),
+        location=schedule.get("location", DEFAULT_SCHEDULE["location"]),
+        pages=int(schedule.get("pages", DEFAULT_SCHEDULE["pages"])),
+        send_email_after=True,
+        auto_email_to=str(schedule.get("email_to", "") or "").strip(),
+    )
+
+
+def _scheduler_loop() -> None:
+    while not SCHEDULER_STOP.is_set():
+        try:
+            with SCHEDULE_LOCK:
+                schedule = _get_stored_schedule()
+                if not schedule.get("enabled"):
+                    pass
+                else:
+                    now = datetime.now()
+                    day_key = SCHEDULE_DAY_KEYS[now.weekday()]
+                    slot = now.strftime("%Y-%m-%d %H:%M")
+                    if (
+                        schedule.get("days", {}).get(day_key, False)
+                        and now.strftime("%H:%M") == schedule.get("time")
+                        and schedule.get("last_triggered_slot") != slot
+                    ):
+                        schedule["last_triggered_slot"] = slot
+                        _save_stored_schedule(schedule)
+                        if not _has_active_run():
+                            worker = threading.Thread(
+                                target=_run_scheduled_search,
+                                args=(schedule,),
+                                daemon=True,
+                            )
+                            worker.start()
+        except Exception:
+            # Keep scheduler alive even if one cycle fails.
+            pass
+        time.sleep(20)
+
+
+def start_scheduler() -> None:
+    global SCHEDULER_THREAD
+    with SCHEDULE_LOCK:
+        if SCHEDULER_THREAD and SCHEDULER_THREAD.is_alive():
+            return
+        SCHEDULER_STOP.clear()
+        SCHEDULER_THREAD = threading.Thread(target=_scheduler_loop, daemon=True)
+        SCHEDULER_THREAD.start()
+
+
+def stop_scheduler() -> None:
+    SCHEDULER_STOP.set()
 
 
 def _run_progress_key(run_id: str) -> str:
@@ -408,7 +590,46 @@ def _job_block(job: dict[str, Any], rank: int | None = None) -> str:
 """.strip()
 
 
-def _build_report(scored_jobs: list[dict[str, Any]]) -> dict[str, Any]:
+def _extract_report_role(keywords: str, top_jobs: list[dict[str, Any]]) -> str:
+    text = (keywords or "").strip()
+    lower = text.lower()
+
+    prefixes = [
+        "start search",
+        "start hunt",
+        "find jobs",
+        "get jobs",
+        "search",
+        "hunt",
+        "find",
+        "run",
+    ]
+    for prefix in prefixes:
+        if lower.startswith(prefix):
+            text = text[len(prefix):].strip(" :,-")
+            lower = text.lower()
+            break
+
+    separators = [" in ", " near ", " around ", " at "]
+    for sep in separators:
+        idx = lower.find(sep)
+        if idx > 0:
+            text = text[:idx].strip(" ,:-")
+            break
+
+    if not text:
+        text = str((top_jobs[0] if top_jobs else {}).get("title", "")).strip()
+
+    text = " ".join(text.split())
+    return text[:70] if text else "Job Search"
+
+
+def _report_display_name(role: str) -> str:
+    date_text = datetime.now().strftime("%b %d, %Y").replace(" 0", " ")
+    return f"{role} · {date_text}"
+
+
+def _build_report(scored_jobs: list[dict[str, Any]], keywords: str) -> dict[str, Any]:
     today = datetime.now().strftime("%Y-%m-%d")
 
     ordered_jobs = sorted(scored_jobs, key=lambda item: item.get("score", 0), reverse=True)
@@ -437,11 +658,14 @@ Found and scored **{len(ordered_jobs)}** fresh jobs.
 {rest_text}
 """.strip()
 
-    report_path = save_report(report_md)
+    role = _extract_report_role(keywords, top_5)
+    report_name = _report_display_name(role)
+    report_path = save_report(report_md, report_name=report_name)
 
     payload = {
         "status": "complete",
         "report_path": report_path,
+        "target_industry": role,
         "report": report_md,
         "top_jobs": top_5,
         "remaining_jobs": rest,
@@ -459,7 +683,15 @@ Found and scored **{len(ordered_jobs)}** fresh jobs.
     return payload
 
 
-def execute_search_run(run_id: str, *, keywords: str, location: str, pages: int) -> None:
+def execute_search_run(
+    run_id: str,
+    *,
+    keywords: str,
+    location: str,
+    pages: int,
+    send_email_after: bool = False,
+    auto_email_to: str = "",
+) -> None:
     try:
         _guard_canceled(run_id)
         _set_progress(run_id, status="running", progress=10, step="Loading profile")
@@ -494,11 +726,22 @@ def execute_search_run(run_id: str, *, keywords: str, location: str, pages: int)
 
         _guard_canceled(run_id)
         _set_progress(run_id, status="running", progress=90, step="Building report")
-        result = _build_report(scored_jobs)
+        result = _build_report(scored_jobs, keywords)
 
         _guard_canceled(run_id)
         save_seen_job_ids([job.get("job_id") or job.get("url") for job in scored_jobs if (job.get("job_id") or job.get("url"))])
         mark_sent_today()
+
+        if send_email_after:
+            _guard_canceled(run_id)
+            _set_progress(run_id, status="running", progress=95, step="Sending email")
+            subject = f"Scheduled SWE Job Report - {datetime.now().strftime('%Y-%m-%d')}"
+            email_result = send_email(
+                subject=subject,
+                body=result.get("report", ""),
+                to_email=auto_email_to,
+            )
+            result["email_result"] = email_result
 
         _set_progress(run_id, status="complete", progress=100, step="Completed", result=result)
 
@@ -528,16 +771,19 @@ def get_latest_report() -> dict[str, Any]:
 
     top_jobs: list[dict[str, Any]] = []
     remaining_jobs: list[dict[str, Any]] = []
+    target_industry = ""
 
     if snapshot_path.exists():
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         top_jobs = snapshot.get("top_jobs", [])
         remaining_jobs = snapshot.get("remaining_jobs", [])
+        target_industry = str(snapshot.get("target_industry", "") or "")
 
     return {
         "found": True,
         "report_path": latest_report["report_path"],
         "report_name": report_path.name,
+        "target_industry": target_industry,
         "report": latest_report["report"],
         "top_jobs": top_jobs,
         "remaining_jobs": remaining_jobs,
@@ -558,12 +804,14 @@ def get_report_by_path(report_path: str) -> dict[str, Any]:
 
     top_jobs: list[dict[str, Any]] = []
     remaining_jobs: list[dict[str, Any]] = []
+    target_industry = ""
     job_count = 0
 
     if snapshot_path.exists():
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         top_jobs = snapshot.get("top_jobs", [])
         remaining_jobs = snapshot.get("remaining_jobs", [])
+        target_industry = str(snapshot.get("target_industry", "") or "")
         job_count = snapshot.get("job_count", len(top_jobs) + len(remaining_jobs))
     else:
         job_count = 0
@@ -572,6 +820,7 @@ def get_report_by_path(report_path: str) -> dict[str, Any]:
         "found": True,
         "report_path": str(requested_path),
         "report_name": requested_path.name,
+        "target_industry": target_industry,
         "report": requested_path.read_text(encoding="utf-8"),
         "top_jobs": top_jobs,
         "remaining_jobs": remaining_jobs,

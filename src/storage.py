@@ -64,9 +64,36 @@ def mark_sent_today():
     RUN_STATE_FILE.write_text(today, encoding="utf-8")
 
 
-def save_report(report_text):
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    path = REPORTS_DIR / f"daily_job_report_{timestamp}.md"
+def _sanitize_report_name(name: str) -> str:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return ""
+    invalid = '<>:"/\\|?*'
+    for ch in invalid:
+        cleaned = cleaned.replace(ch, " ")
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:120].strip()
+
+
+def _unique_report_path(base_name: str) -> Path:
+    candidate = REPORTS_DIR / f"{base_name}.md"
+    if not candidate.exists():
+        return candidate
+    index = 2
+    while True:
+        candidate = REPORTS_DIR / f"{base_name} ({index}).md"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def save_report(report_text, report_name: str | None = None):
+    cleaned_name = _sanitize_report_name(report_name or "")
+    if cleaned_name:
+        path = _unique_report_path(cleaned_name)
+    else:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        path = REPORTS_DIR / f"daily_job_report_{timestamp}.md"
 
     with open(path, "w", encoding="utf-8") as file:
         file.write(report_text)

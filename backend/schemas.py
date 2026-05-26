@@ -25,3 +25,23 @@ class ChatRequest(BaseModel):
 
 class EmailLatestRequest(BaseModel):
     to_email: str = ""
+
+
+class ScheduleRequest(BaseModel):
+    enabled: bool = False
+    time: str = "09:00"
+    days: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "mon": True,
+            "tue": True,
+            "wed": True,
+            "thu": True,
+            "fri": True,
+            "sat": False,
+            "sun": False,
+        }
+    )
+    keywords: str = "software engineer"
+    location: str = "United States"
+    pages: int = Field(default=2, ge=1, le=10)
+    email_to: str = ""

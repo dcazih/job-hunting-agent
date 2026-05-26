@@ -163,7 +163,7 @@ def scrape_jobs(keywords="software engineer", location="United States", pages=2,
 
             job["description"] = fetch_job_description(job["job_id"])
 
-            sleep_secs = random.uniform(2, 5)
+            sleep_secs = random.uniform(0.6, 1.4)
             if callable(is_canceled):
                 slept = 0.0
                 while slept < sleep_secs:
@@ -177,7 +177,7 @@ def scrape_jobs(keywords="software engineer", location="United States", pages=2,
 
         all_jobs.extend(jobs)
 
-        sleep_secs = random.uniform(3, 7)  # Prevents endpoint hammering.
+        sleep_secs = random.uniform(1, 2)  # Prevents endpoint hammering.
         if callable(is_canceled):
             slept = 0.0
             while slept < sleep_secs:

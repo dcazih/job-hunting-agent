@@ -8,6 +8,7 @@ from run_daily_agent import create_job_agent
 from pathlib import Path
 
 from backend.agent import (
+    get_search_schedule,
     cancel_search_run,
     create_search_run,
     delete_uploaded_resume,
@@ -23,11 +24,14 @@ from backend.agent import (
     list_reports,
     save_feedback,
     save_preferences,
+    save_search_schedule,
     save_uploaded_resume,
+    start_scheduler,
+    stop_scheduler,
     set_active_uploaded_resume,
     UPLOAD_THUMBNAILS_DIR,
 )
-from backend.schemas import EmailLatestRequest, FeedbackRequest, PreferencesRequest, SearchRunRequest
+from backend.schemas import EmailLatestRequest, FeedbackRequest, PreferencesRequest, ScheduleRequest, SearchRunRequest
 from backend.schemas import ChatRequest
 
 
@@ -43,6 +47,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _startup_scheduler() -> None:
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+def _shutdown_scheduler() -> None:
+    stop_scheduler()
 
 
 @app.get("/api/health")
@@ -116,6 +130,19 @@ def write_preferences(payload: PreferencesRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@app.get("/api/schedule")
+def read_schedule() -> dict:
+    return get_search_schedule()
+
+
+@app.post("/api/schedule")
+def write_schedule(payload: ScheduleRequest) -> dict:
+    try:
+        return save_search_schedule(payload.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 @app.post("/api/search/run")
 def run_search(payload: SearchRunRequest) -> dict:
     run_id = create_search_run()
@@ -124,6 +151,8 @@ def run_search(payload: SearchRunRequest) -> dict:
         keywords=payload.keywords,
         location=payload.location,
         pages=payload.pages,
+        send_email_after=False,
+        auto_email_to="",
     )
 
     return {
