@@ -1,44 +1,51 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import os
+
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from threading import Lock
-from run_daily_agent import create_job_agent
+import json
+from backend.agent_factory import create_job_agent
 from pathlib import Path
 
 from backend.agent import (
-    get_search_schedule,
     cancel_search_run,
     create_search_run,
+    clear_chat_active_run_id,
+    clear_current_run_id,
+    get_chat_active_run_id,
+    get_chat_messages,
+    get_search_run,
+    get_search_schedule,
     delete_uploaded_resume,
     delete_report_by_path,
     email_latest_report,
-    execute_search_run,
     get_latest_report,
     get_report_by_path,
     get_preferences,
     get_resume_status,
-    get_search_run,
     list_uploaded_resumes,
     list_reports,
     save_feedback,
     save_preferences,
     save_search_schedule,
     save_uploaded_resume,
+    save_chat_messages,
+    set_chat_active_run_id,
+    set_current_run_id,
+    get_chat_session_lock,
+    run_daily_schedule_cron,
     start_scheduler,
     stop_scheduler,
     set_active_uploaded_resume,
     UPLOAD_THUMBNAILS_DIR,
 )
-from backend.schemas import EmailLatestRequest, FeedbackRequest, PreferencesRequest, ScheduleRequest, SearchRunRequest
-from backend.schemas import ChatRequest
+from backend.schemas import EmailLatestRequest, FeedbackRequest, PreferencesRequest, ScheduleRequest, ChatRequest
 
 
 app = FastAPI(title="Job Hunting Agent API", version="0.1.0")
-CHAT_LOCK = Lock()
 CHAT_AGENT = create_job_agent()
-CHAT_MESSAGES: list[dict] = []
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +58,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup_scheduler() -> None:
+    if os.getenv("VERCEL") or os.getenv("DISABLE_INPROCESS_SCHEDULER"):
+        return
     start_scheduler()
 
 
@@ -143,39 +152,14 @@ def write_schedule(payload: ScheduleRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-@app.post("/api/search/run")
-def run_search(payload: SearchRunRequest) -> dict:
-    run_id = create_search_run()
-    execute_search_run(
-        run_id,
-        keywords=payload.keywords,
-        location=payload.location,
-        pages=payload.pages,
-        send_email_after=False,
-        auto_email_to="",
-    )
-
-    return {
-        "status": "started",
-        "run_id": run_id,
-    }
-
-
-@app.get("/api/search/status/{run_id}")
-def search_status(run_id: str) -> dict:
-    run = get_search_run(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    return run
-
-
-@app.post("/api/search/stop/{run_id}")
-def stop_search(run_id: str) -> dict:
-    try:
-        return cancel_search_run(run_id)
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+@app.get("/api/cron")
+def cron_job(request: Request) -> dict:
+    cron_secret = os.getenv("CRON_SECRET", "").strip()
+    if cron_secret:
+        auth_header = str(request.headers.get("authorization", "") or "").strip()
+        if auth_header != f"Bearer {cron_secret}":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+    return run_daily_schedule_cron()
 
 
 @app.get("/api/reports/latest")
@@ -230,14 +214,84 @@ def chat(payload: ChatRequest) -> dict:
     user_message = payload.message.strip()
     if not user_message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
+    session_id = str(payload.session_id or "default").strip() or "default"
 
-    with CHAT_LOCK:
-        CHAT_MESSAGES.append({"role": "user", "content": user_message})
-        result = CHAT_AGENT.invoke({"messages": CHAT_MESSAGES})
-        messages = result.get("messages", [])
-        assistant_content = str(result)
-        if messages:
-            assistant_content = messages[-1].content
-        CHAT_MESSAGES.append({"role": "assistant", "content": assistant_content})
+    def _extract_report(messages: list) -> dict | None:
+        for message in reversed(messages):
+            content = getattr(message, "content", None)
+            if isinstance(content, dict):
+                if content.get("report") or content.get("top_jobs") or content.get("remaining_jobs"):
+                    return content
+            if isinstance(content, str):
+                text = content.strip()
+                if not text:
+                    continue
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    continue
+                if isinstance(parsed, dict) and (parsed.get("report") or parsed.get("top_jobs") or parsed.get("remaining_jobs")):
+                    return parsed
+        return None
 
-    return {"assistant_message": assistant_content}
+    run_id = create_search_run()
+    set_chat_active_run_id(session_id, run_id)
+    set_current_run_id(run_id)
+    assistant_content = ""
+    messages: list = []
+    try:
+        session_lock = get_chat_session_lock(session_id)
+        with session_lock:
+            history = get_chat_messages(session_id)
+            conversation = list(history)
+            if payload.resume_display_name:
+                conversation = [
+                    {
+                        "role": "system",
+                        "content": f"Active resume already selected in the UI: {payload.resume_display_name}. Do not ask the user to upload a resume before searching.",
+                    }
+                ] + conversation
+            conversation.append({"role": "user", "content": user_message})
+            result = CHAT_AGENT.invoke({"messages": conversation})
+            messages = result.get("messages", [])
+            assistant_content = str(result)
+            if messages:
+                assistant_content = messages[-1].content
+            save_chat_messages(
+                session_id,
+                history
+                + [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": assistant_content},
+                ],
+            )
+    except RuntimeError as error:
+        if "Search was canceled by user." not in str(error):
+            raise
+        assistant_content = "Stopped."
+        messages = []
+    finally:
+        clear_chat_active_run_id(session_id)
+        clear_current_run_id()
+
+    response: dict = {"assistant_message": assistant_content}
+    report = _extract_report(messages)
+    if report is not None:
+        response["report"] = report
+    return response
+
+
+@app.post("/api/chat/stop")
+def stop_chat(session_id: str = "default") -> dict:
+    run_id = get_chat_active_run_id(session_id)
+    if not run_id:
+        return {"status": "idle"}
+    return cancel_search_run(run_id)
+
+
+@app.get("/api/chat/status")
+def chat_status(session_id: str = "default") -> dict:
+    run_id = get_chat_active_run_id(session_id)
+    if not run_id:
+        return {"active": False, "run": None}
+    return {"active": True, "run": get_search_run(run_id)}

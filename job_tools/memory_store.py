@@ -3,7 +3,7 @@ from datetime import datetime
 import json
 import uuid
 import os
-from cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
+from job_tools.cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent

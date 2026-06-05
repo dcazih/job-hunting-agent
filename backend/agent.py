@@ -7,29 +7,38 @@ import shutil
 import threading
 import time
 import uuid
+import contextvars
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 import pymupdf
 
-# Make current repo modules importable.
-import sys
+from job_tools.emailer import send_email
+from job_tools.job_scorer import score_jobs
+from job_tools.linkedin_scraper import scrape_jobs
+from job_tools.memory_store import add_job_feedback, memory_as_text
+from job_tools.resume_loader import (
+    DEFAULT_PREFERENCES,
+    DEFAULT_RESUME_PDF,
+    DEFAULT_RESUME_TXT,
+    load_candidate_profile,
+    refresh_resume_text_from_pdf,
+)
+from job_tools.storage import (
+    load_latest_report,
+    mark_sent_today,
+    save_report,
+    save_seen_job_ids,
+    load_seen_job_ids,
+)
+from job_tools.cloud_state import (
+    enabled as cloud_enabled,
+    set_json as cloud_set_json,
+    get_json as cloud_get_json,
+)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-SRC_DIR = ROOT_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.append(str(SRC_DIR))
-
-from emailer import send_email
-from job_scorer import score_jobs
-from linkedin_scraper import scrape_jobs
-from memory_store import add_job_feedback, memory_as_text
-from resume_loader import DEFAULT_PREFERENCES, DEFAULT_RESUME_PDF, DEFAULT_RESUME_TXT, load_candidate_profile, refresh_resume_text_from_pdf
-from storage import load_latest_report, mark_sent_today, save_report, save_seen_job_ids, load_seen_job_ids
-from cloud_state import enabled as cloud_enabled, set_json as cloud_set_json, get_json as cloud_get_json
-
-
 RUNTIME_ROOT = Path(os.getenv("APP_RUNTIME_DIR", "/tmp/job-hunting-agent" if os.getenv("VERCEL") else str(ROOT_DIR)))
 DATA_DIR = RUNTIME_ROOT / "data"
 REPORTS_DIR = RUNTIME_ROOT / "reports"
@@ -60,6 +69,12 @@ class SearchProgress:
 SEARCH_RUNS: dict[str, SearchProgress] = {}
 RUNS_LOCK = threading.Lock()
 CANCEL_REQUESTS: set[str] = set()
+CHAT_AGENT_RUN_ID = "chat-agent"
+CHAT_SESSION_ACTIVE_RUNS: dict[str, str] = {}
+CHAT_SESSION_MESSAGES: dict[str, list[dict[str, Any]]] = {}
+CHAT_SESSION_LOCKS: dict[str, threading.RLock] = {}
+CHAT_SESSION_LOCKS_LOCK = threading.Lock()
+CURRENT_RUN_ID: contextvars.ContextVar[str] = contextvars.ContextVar("current_run_id", default="")
 SCHEDULE_LOCK = threading.Lock()
 SCHEDULE_PATH = DATA_DIR / "schedule_config.json"
 SCHEDULER_THREAD: threading.Thread | None = None
@@ -181,6 +196,91 @@ def save_search_schedule(payload: dict[str, Any]) -> dict[str, Any]:
         return _public_schedule(schedule)
 
 
+def get_current_run_id() -> str:
+    return CURRENT_RUN_ID.get()
+
+
+def set_current_run_id(run_id: str) -> None:
+    CURRENT_RUN_ID.set(run_id)
+
+
+def clear_current_run_id() -> None:
+    CURRENT_RUN_ID.set("")
+
+
+def get_chat_session_lock(session_id: str) -> threading.RLock:
+    normalized = str(session_id or "default").strip() or "default"
+    with CHAT_SESSION_LOCKS_LOCK:
+        lock = CHAT_SESSION_LOCKS.get(normalized)
+        if lock is None:
+            lock = threading.RLock()
+            CHAT_SESSION_LOCKS[normalized] = lock
+        return lock
+
+
+def get_chat_messages(session_id: str) -> list[dict[str, Any]]:
+    normalized = str(session_id or "default").strip() or "default"
+    with get_chat_session_lock(normalized):
+        return [dict(message) for message in CHAT_SESSION_MESSAGES.get(normalized, [])]
+
+
+def save_chat_messages(session_id: str, messages: list[dict[str, Any]]) -> None:
+    normalized = str(session_id or "default").strip() or "default"
+    with get_chat_session_lock(normalized):
+        CHAT_SESSION_MESSAGES[normalized] = [dict(message) for message in messages]
+
+
+def get_chat_active_run_id(session_id: str) -> str:
+    normalized = str(session_id or "default").strip() or "default"
+    with get_chat_session_lock(normalized):
+        return CHAT_SESSION_ACTIVE_RUNS.get(normalized, "")
+
+
+def set_chat_active_run_id(session_id: str, run_id: str) -> None:
+    normalized = str(session_id or "default").strip() or "default"
+    with get_chat_session_lock(normalized):
+        CHAT_SESSION_ACTIVE_RUNS[normalized] = str(run_id or "").strip()
+
+
+def clear_chat_active_run_id(session_id: str) -> None:
+    normalized = str(session_id or "default").strip() or "default"
+    with get_chat_session_lock(normalized):
+        CHAT_SESSION_ACTIVE_RUNS.pop(normalized, None)
+
+
+def clear_search_run_cancel(run_id: str) -> None:
+    if cloud_enabled():
+        cloud_set_json(_run_cancel_key(run_id), False)
+        return
+    with RUNS_LOCK:
+        CANCEL_REQUESTS.discard(run_id)
+
+
+def is_search_run_canceled(run_id: str) -> bool:
+    return _is_canceled(run_id)
+
+
+def set_search_run_progress(
+    run_id: str,
+    *,
+    status: str,
+    progress: int,
+    step: str,
+    result: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    _set_progress(run_id, status=status, progress=progress, step=step, result=result, error=error)
+    payload = get_search_run(run_id)
+    return payload or {
+        "run_id": run_id,
+        "status": status,
+        "progress": progress,
+        "step": step,
+        "result": result,
+        "error": error,
+    }
+
+
 def _has_active_run() -> bool:
     with RUNS_LOCK:
         for run in SEARCH_RUNS.values():
@@ -199,6 +299,7 @@ def _run_scheduled_search(schedule: dict[str, Any]) -> None:
         send_email_after=True,
         auto_email_to=str(schedule.get("email_to", "") or "").strip(),
     )
+    return run_id
 
 
 def _scheduler_loop() -> None:
@@ -244,6 +345,32 @@ def start_scheduler() -> None:
 
 def stop_scheduler() -> None:
     SCHEDULER_STOP.set()
+
+
+def run_daily_schedule_cron() -> dict[str, Any]:
+    with SCHEDULE_LOCK:
+        schedule = _get_stored_schedule()
+        if not schedule.get("enabled"):
+            return {"status": "skipped", "reason": "disabled"}
+
+        now = datetime.now()
+        day_key = SCHEDULE_DAY_KEYS[now.weekday()]
+        if not schedule.get("days", {}).get(day_key, False):
+            return {"status": "skipped", "reason": "day_disabled"}
+
+        if _has_active_run():
+            return {"status": "skipped", "reason": "active_run"}
+
+        slot = now.strftime("%Y-%m-%d %H:%M")
+        if schedule.get("last_triggered_slot") == slot:
+            return {"status": "skipped", "reason": "already_triggered"}
+
+        schedule["last_triggered_slot"] = slot
+        _save_stored_schedule(schedule)
+
+    worker = threading.Thread(target=_run_scheduled_search, args=(schedule,), daemon=True)
+    worker.start()
+    return {"status": "started", "keywords": schedule.get("keywords", DEFAULT_SCHEDULE["keywords"]), "location": schedule.get("location", DEFAULT_SCHEDULE["location"]), "pages": int(schedule.get("pages", DEFAULT_SCHEDULE["pages"]))}
 
 
 def _run_progress_key(run_id: str) -> str:

@@ -4,8 +4,9 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlencode
 
-
-BASE_SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+BASE_SEARCH_URL = (
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+)
 JOB_DETAIL_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{}"
 
 HEADERS = {
@@ -135,10 +136,16 @@ def fetch_job_description(job_id):
 
     return description_el.get_text(separator="\n", strip=True)
 
-def scrape_jobs(keywords="software engineer", location="United States", pages=2, is_canceled=None):
+
+def scrape_jobs(
+    keywords="software engineering",
+    location="United States",
+    pages=1,
+    is_canceled=None,
+    on_job_found=None,
+):
     """
     Scrapes multiple result pages.
-
     pages=2 means offsets 0 and 25.
     """
 
@@ -149,17 +156,26 @@ def scrape_jobs(keywords="software engineer", location="United States", pages=2,
             raise RuntimeError("Search was canceled by user.")
         start = page * 25
         print(f"Fetching page {page + 1}, start={start}...")
-        
+
         # Get jobs on the page
         html = fetch_search_page(keywords, location, start=start)
         jobs = parse_job_cards(html)
         print(f"Found {len(jobs)} jobs on this page.")
 
         # Get descriptions of found jobs
-        for job in jobs:
+        for job_index, job in enumerate(jobs, start=1):
             if callable(is_canceled) and is_canceled():
                 raise RuntimeError("Search was canceled by user.")
             print(f"Fetching description: {job['title']} at {job['company']}")
+
+            if callable(on_job_found):
+                on_job_found(
+                    job=job,
+                    page_index=page + 1,
+                    page_count=pages,
+                    job_index=len(all_jobs) + job_index,
+                    page_job_count=len(jobs),
+                )
 
             job["description"] = fetch_job_description(job["job_id"])
 
@@ -211,7 +227,7 @@ if __name__ == "__main__":
     jobs = scrape_jobs(
         keywords="software engineer",
         location="United States",
-        pages=2,
+        pages=1,
     )
 
     df = pd.DataFrame(jobs)

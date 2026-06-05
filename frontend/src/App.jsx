@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Analytics } from "@vercel/analytics/react";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 import {
   faArrowUp,
   faChevronUp,
@@ -48,9 +50,22 @@ const DEFAULT_SCHEDULE = {
   },
   keywords: "software engineer",
   location: "United States",
-  pages: 2,
+  pages: 1,
   email_to: "",
 };
+
+function getSessionId() {
+  const storageKey = "job_hunting_agent_session_id";
+  try {
+    const existing = window.sessionStorage.getItem(storageKey);
+    if (existing) return existing;
+    const created = crypto.randomUUID();
+    window.sessionStorage.setItem(storageKey, created);
+    return created;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -135,8 +150,15 @@ function ReportPanel({ report, onEmailLatest, emailBusy, onShowEmailTooltip, onH
 
   const topJobs = report.top_jobs || [];
   const remainingJobs = report.remaining_jobs || [];
-  const title = report.report_name || report.report_path?.split("/").pop() || "Untitled";
-  const targetIndustry = report.target_industry || "";
+  const title = report.report_title || report.report_name || report.report_path?.split("/").pop() || "Untitled";
+  const targetIndustry = (report.target_industry || "").trim();
+  const displayTargetIndustry = targetIndustry
+    ? targetIndustry
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ")
+    : "";
 
   return (
     <section className="report-panel">
@@ -156,7 +178,7 @@ function ReportPanel({ report, onEmailLatest, emailBusy, onShowEmailTooltip, onH
           <FontAwesomeIcon icon={faEnvelope} />
         </button>
       </div>
-      {targetIndustry && <p className="report-target-industry">Target industry: {targetIndustry}</p>}
+      {displayTargetIndustry && <p className="report-target-industry">Target industry: {displayTargetIndustry}</p>}
 
       <section className="report-section">
         <h4>Top Jobs</h4>
@@ -190,26 +212,6 @@ function ReportPanel({ report, onEmailLatest, emailBusy, onShowEmailTooltip, onH
   );
 }
 
-function formatSearchStep(step) {
-  const normalized = String(step || "").toLowerCase();
-  if (
-    normalized.includes("scraping jobs") ||
-    normalized.includes("filtering seen jobs") ||
-    normalized.includes("loading profile") ||
-    normalized.includes("loading memory") ||
-    normalized.includes("fetch")
-  ) return "Fetching Jobs";
-  if (normalized.includes("description")) return "Getting Descriptions";
-  if (normalized.includes("scoring jobs") || normalized.includes("score")) return "Scoring Jobs";
-  if (normalized.includes("building report") || normalized.includes("report")) return "Creating Report";
-  return "";
-}
-
-function isSearchIntent(message) {
-  const text = String(message || "").trim().toLowerCase();
-  return /^(run|search|hunt|start search|start hunt|find jobs)\b/.test(text);
-}
-
 function ResumePresentIcon({ className = "" }) {
   return (
     <span className={`resume-file-with-badge ${className}`.trim()} aria-hidden="true">
@@ -222,6 +224,11 @@ function ResumePresentIcon({ className = "" }) {
 }
 
 export default function App() {
+  const sessionIdRef = useRef(null);
+  if (!sessionIdRef.current) {
+    sessionIdRef.current = getSessionId();
+  }
+  const sessionId = sessionIdRef.current;
   const loadingWords = [
     "Working",
     "Seeking",
@@ -257,9 +264,13 @@ export default function App() {
   const [focusRequest, setFocusRequest] = useState(null);
 
   const [query, setQuery] = useState("");
-  const [runId, setRunId] = useState("");
-  const [runState, setRunState] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [searchDisplay, setSearchDisplay] = useState({
+    headline: "",
+    subline: "",
+    shimmer: false,
+  });
+  const [searchStatusVisible, setSearchStatusVisible] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [emailTo, setEmailTo] = useState("");
@@ -286,9 +297,9 @@ export default function App() {
   const [resumeUploads, setResumeUploads] = useState([]);
   const [resumePickerOpen, setResumePickerOpen] = useState(false);
   const [resumePlusClosing, setResumePlusClosing] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const [floatingTooltip, setFloatingTooltip] = useState({ visible: false, text: "", top: 0, left: 0, placement: "left" });
   const [pulsingResumeName, setPulsingResumeName] = useState("");
-  const [randomLoadingWord, setRandomLoadingWord] = useState("Searching");
 
   const messageRefs = useRef({});
   const chatContentRef = useRef(null);
@@ -303,22 +314,12 @@ export default function App() {
   const resumePulseTimerRef = useRef(null);
   const scheduleToastTimerRef = useRef(null);
   const chatAbortRef = useRef(null);
-  const stopRequestedRef = useRef(false);
-  const runIdRef = useRef("");
+  const dragDepthRef = useRef(0);
+  const dragClearTimerRef = useRef(null);
+  const searchSummaryHoldUntilRef = useRef(0);
+  const searchRunIdRef = useRef("");
   const bottomTextareaHeightRef = useRef(0);
-
-  useEffect(() => {
-    runIdRef.current = runId;
-  }, [runId]);
-
-  useEffect(() => {
-    if (runState?.status !== "running") return;
-    const timer = setInterval(() => {
-      const next = loadingWords[Math.floor(Math.random() * loadingWords.length)];
-      setRandomLoadingWord(next);
-    }, 8500);
-    return () => clearInterval(timer);
-  }, [runState?.status]);
+  const searchStatusKey = `${searchDisplay.headline}||${searchDisplay.shimmer ? "1" : "0"}`;
 
   function appendText(text, role = "assistant", focusBlock = null, extra = {}) {
     const newId = crypto.randomUUID();
@@ -371,44 +372,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let timer = null;
-
-    if (runId) {
-      timer = setInterval(async () => {
-        try {
-          const status = await api(`/api/search/status/${runId}`);
-          setRunState(status);
-
-          if (status.status === "complete" || status.status === "failed") {
-            clearInterval(timer);
-            setBusy(false);
-            stopRequestedRef.current = false;
-
-            if (status.status === "complete") {
-              setSelectedReportPath(status.result.report_path);
-              upsertReportMessage(status.result, true);
-              await refreshReports();
-            } else {
-              appendText(status.error || "Search failed.");
-            }
-            setRunId("");
-          }
-        } catch (error) {
-          clearInterval(timer);
-          setBusy(false);
-          setRunId("");
-          stopRequestedRef.current = false;
-          appendText(error.message);
-        }
-      }, 2000);
-    }
-
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [runId]);
-
-  useEffect(() => {
     if (!focusRequest?.id) return;
     const target = messageRefs.current[focusRequest.id];
     if (target) {
@@ -438,7 +401,129 @@ export default function App() {
     return () => {
       window.removeEventListener("resize", updateLastChatExtraPadding);
     };
-  }, [messages, runState, introMode, resumePickerOpen]);
+  }, [messages, introMode, resumePickerOpen]);
+
+  useEffect(() => {
+    if (!busy) {
+      searchSummaryHoldUntilRef.current = 0;
+      searchRunIdRef.current = "";
+      setSearchStatusVisible(false);
+      setSearchDisplay({
+        headline: "",
+        subline: "",
+        shimmer: false,
+      });
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    function buildDisplay(run) {
+      const now = Date.now();
+      const result = run?.result || {};
+      const step = String(run?.step || "").toLowerCase();
+      const runId = String(run?.run_id || "");
+      const phase = String(result.phase || "").toLowerCase();
+      const scrapedCount = Number(result.scraped_count || 0) || 0;
+      const scoringIndex = Number(result.scoring_index || 0) || 0;
+      const scoringTotal = Number(result.scoring_total || 0) || 0;
+      const currentTitle = String(result.current_job_title || "").trim();
+      const currentCompany = String(result.current_job_company || "").trim();
+
+      if (runId && searchRunIdRef.current !== runId) {
+        searchRunIdRef.current = runId;
+        searchSummaryHoldUntilRef.current = 0;
+      }
+
+      if (step.includes("fetch") || phase === "fetching") {
+        return {
+          headline: "Hunting for Jobs...",
+          subline: currentTitle ? (currentCompany ? `${currentTitle} at ${currentCompany}` : currentTitle) : "Fetching jobs...",
+          shimmer: true,
+        };
+      }
+
+      if (step.includes("score") || phase === "scoring") {
+        if (!searchSummaryHoldUntilRef.current) {
+          searchSummaryHoldUntilRef.current = now + 3000;
+          return {
+            headline: `${scrapedCount} jobs found`,
+            subline: "Preparing scoring...",
+            shimmer: true,
+          };
+        }
+
+        if (now < searchSummaryHoldUntilRef.current) {
+          return {
+            headline: `${scrapedCount} jobs found`,
+            subline: "Preparing scoring...",
+            shimmer: true,
+          };
+        }
+
+        return {
+          headline: scoringTotal ? `Scoring jobs (${scoringIndex}/${scoringTotal})` : "Scoring jobs",
+          subline: currentTitle ? (currentCompany ? `${currentTitle} at ${currentCompany}` : currentTitle) : "",
+          shimmer: true,
+        };
+      }
+
+      if (step.includes("build") || phase === "building") {
+        return {
+          headline: "Building Report",
+          subline: "",
+          shimmer: true,
+        };
+      }
+
+      if (run?.status === "complete") {
+        return {
+          headline: "Building Report",
+          subline: "",
+          shimmer: true,
+        };
+      }
+
+      return {
+        headline: "",
+        subline: "",
+        shimmer: false,
+      };
+    }
+
+    let inFlight = false;
+    const poll = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const payload = await api(`/api/chat/status?session_id=${encodeURIComponent(sessionId)}`);
+        if (cancelled) return;
+        const run = payload?.run || null;
+        if (!payload?.active || !run) {
+          return;
+        }
+        const nextDisplay = buildDisplay(run);
+        if (nextDisplay.headline || nextDisplay.subline) {
+          setSearchStatusVisible(true);
+          setSearchDisplay(nextDisplay);
+        }
+      } catch (error) {
+        // Ignore polling errors while the request is in flight.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void poll();
+    const timer = setInterval(() => {
+      void poll();
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [busy]);
 
   useEffect(() => {
     const onDocClick = () => setOpenReportMenu("");
@@ -513,6 +598,139 @@ export default function App() {
     document.addEventListener("keydown", handleGlobalTypeToFocus);
     return () => document.removeEventListener("keydown", handleGlobalTypeToFocus);
   }, [introMode, resumePickerOpen]);
+
+  useEffect(() => {
+    function handleGlobalPasteToFocus(event) {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      const pastedText = event.clipboardData?.getData("text/plain");
+      if (!pastedText) return;
+
+      event.preventDefault();
+      const textarea = introMode ? introTextareaRef.current : bottomTextareaRef.current;
+      if (!textarea) return;
+      if (resumePickerOpen) {
+        onResumeButtonClick();
+      }
+      textarea.focus();
+      setQuery((previous) => `${previous}${pastedText}`);
+      requestAnimationFrame(() => {
+        const end = textarea.value.length;
+        textarea.setSelectionRange(end, end);
+      });
+    }
+
+    document.addEventListener("paste", handleGlobalPasteToFocus);
+    return () => document.removeEventListener("paste", handleGlobalPasteToFocus);
+  }, [introMode, resumePickerOpen]);
+
+  useEffect(() => {
+    function clearDragOverlay() {
+      dragDepthRef.current = 0;
+      setDragActive(false);
+      if (dragClearTimerRef.current) {
+        clearTimeout(dragClearTimerRef.current);
+        dragClearTimerRef.current = null;
+      }
+    }
+
+    function scheduleDragOverlayClear() {
+      if (dragClearTimerRef.current) {
+        clearTimeout(dragClearTimerRef.current);
+      }
+      dragClearTimerRef.current = setTimeout(() => {
+        clearDragOverlay();
+      }, 120);
+    }
+
+    function isFileDrag(event) {
+      const dataTransfer = event.dataTransfer;
+      if (!dataTransfer) return false;
+      if (dataTransfer.types && Array.from(dataTransfer.types).includes("Files")) {
+        return true;
+      }
+      return Array.from(dataTransfer.items || []).some((item) => item.kind === "file");
+    }
+
+    function isPdfFile(file) {
+      const name = String(file?.name || "").toLowerCase();
+      return Boolean(
+        file &&
+        (file.type === "application/pdf" || name.endsWith(".pdf"))
+      );
+    }
+
+    function setDragStateFromEvent(event) {
+      if (!isFileDrag(event)) return false;
+      event.preventDefault();
+      dragDepthRef.current += 1;
+      setDragActive(true);
+      scheduleDragOverlayClear();
+      return true;
+    }
+
+    function handleDragEnter(event) {
+      setDragStateFromEvent(event);
+    }
+
+    function handleDragOver(event) {
+      const isFile = setDragStateFromEvent(event);
+      if (!isFile) return;
+      event.dataTransfer.dropEffect = busy ? "none" : "copy";
+      scheduleDragOverlayClear();
+    }
+
+    function handleDragLeave(event) {
+      if (!isFileDrag(event)) return;
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) {
+        clearDragOverlay();
+      }
+    }
+
+    function handleDrop(event) {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      clearDragOverlay();
+      if (busy) return;
+
+      const files = Array.from(event.dataTransfer?.files || []);
+      const pdfFile = files.find(isPdfFile);
+      if (pdfFile) {
+        void handleUpload(pdfFile);
+        return;
+      }
+
+      appendText("Please upload a PDF resume.");
+    }
+
+    function handleDragEnd() {
+      clearDragOverlay();
+    }
+
+    window.addEventListener("dragenter", handleDragEnter);
+    window.addEventListener("dragover", handleDragOver);
+    window.addEventListener("dragleave", handleDragLeave);
+    window.addEventListener("drop", handleDrop);
+    window.addEventListener("dragend", handleDragEnd);
+    return () => {
+    window.removeEventListener("dragenter", handleDragEnter);
+    window.removeEventListener("dragover", handleDragOver);
+    window.removeEventListener("dragleave", handleDragLeave);
+    window.removeEventListener("drop", handleDrop);
+    window.removeEventListener("dragend", handleDragEnd);
+    if (dragClearTimerRef.current) {
+      clearTimeout(dragClearTimerRef.current);
+    }
+    };
+  }, [busy]);
 
   useEffect(() => {
     return () => {
@@ -613,9 +831,6 @@ export default function App() {
   async function handleSearch() {
     const trimmed = query.trim();
     if (!trimmed || busy) return;
-    stopRequestedRef.current = false;
-    const searchIntent = isSearchIntent(trimmed);
-    const activeResume = resumeUploads.find((item) => item.is_active) || null;
 
     if (introMode) {
       setIntroFadingOut(true);
@@ -629,68 +844,53 @@ export default function App() {
       trimmed,
       "user",
       "start",
-      searchIntent
-        ? {
-            isSearchMessage: true,
-            resumeUsed: activeResume
-              ? {
-                  name: activeResume.display_name,
-                  thumbnail_url: activeResume.thumbnail_url,
-                }
-              : null,
-          }
-        : {},
+      {},
     );
     setQuery("");
     requestAnimationFrame(() => {
       resizeBottomComposerTextarea();
     });
+    searchSummaryHoldUntilRef.current = 0;
+    searchRunIdRef.current = "";
+    setSearchStatusVisible(false);
+    setSearchDisplay({
+      headline: "",
+      subline: "",
+      shimmer: false,
+    });
     setBusy(true);
 
     try {
-      if (!searchIntent) {
-        const abortController = new AbortController();
-        chatAbortRef.current = abortController;
-        const payload = await api("/api/chat", {
-          method: "POST",
-          body: JSON.stringify({ message: trimmed }),
-          signal: abortController.signal,
-        });
-        chatAbortRef.current = null;
-        appendText(payload.assistant_message || "Done.", "assistant", "start");
-        setBusy(false);
-        return;
-      }
-
-      setRandomLoadingWord("Performing Job Search");
-      setRunState({ status: "running", step: "Fetching jobs", progress: 0 });
       const abortController = new AbortController();
       chatAbortRef.current = abortController;
-      const payload = await api("/api/search/run", {
+      const activeResume = resumeUploads.find((item) => item.is_active) || null;
+      const payload = await api("/api/chat", {
         method: "POST",
         body: JSON.stringify({
-          keywords: trimmed,
-          location: "United States",
-          pages: 2,
+          message: trimmed,
+          session_id: sessionId,
+          resume_name: activeResume?.name || "",
+          resume_display_name: activeResume?.display_name || "",
         }),
         signal: abortController.signal,
       });
       chatAbortRef.current = null;
-      if (!payload.run_id) {
-        throw new Error("Search did not return a run id.");
-      }
-      setRunId(payload.run_id);
-      if (stopRequestedRef.current) {
-        try {
-          await api(`/api/search/stop/${payload.run_id}`, { method: "POST" });
-        } catch {
-          // If stop fails here, the polling loop will surface run failure/timeout.
+      if (payload.report) {
+        upsertReportMessage(payload.report, true, "start");
+        if (payload.report.report_path) {
+          setSelectedReportPath(payload.report.report_path);
+          await refreshReports();
+        }
+        if (payload.assistant_message && String(payload.assistant_message).trim()) {
+          setBusy(false);
+          return;
         }
       }
+      appendText(payload.assistant_message || "Done.", "assistant", "start");
+      setBusy(false);
     } catch (error) {
       chatAbortRef.current = null;
       setBusy(false);
-      setRunState(null);
       if (error?.name === "AbortError") {
         appendText("Stopped.");
         return;
@@ -700,20 +900,17 @@ export default function App() {
   }
 
   async function handleStop() {
-    stopRequestedRef.current = true;
-    if (chatAbortRef.current) {
-      chatAbortRef.current.abort();
-    }
-    const activeRunId = runIdRef.current;
-    if (!activeRunId) {
-      setBusy(false);
-      return;
-    }
     try {
-      await api(`/api/search/stop/${activeRunId}`, { method: "POST" });
-      setBusy(false);
+      await api(`/api/chat/stop?session_id=${encodeURIComponent(sessionId)}`, {
+        method: "POST",
+      });
     } catch (error) {
-      appendText(error.message);
+      // Ignore stop errors; aborting the client request still matters.
+    } finally {
+      if (chatAbortRef.current) {
+        chatAbortRef.current.abort();
+      }
+      setBusy(false);
     }
   }
 
@@ -811,33 +1008,34 @@ export default function App() {
   }
 
   function toggleScheduleDay(dayKey) {
-    setScheduleDailyEnabled(false);
-    setScheduleForm((previous) => ({
-      ...previous,
-      days: {
+    setScheduleForm((previous) => {
+      const nextDays = {
         ...previous.days,
         [dayKey]: !previous.days[dayKey],
-      },
-    }));
+      };
+      setScheduleDailyEnabled(Object.values(nextDays).every(Boolean));
+      return {
+        ...previous,
+        days: nextDays,
+      };
+    });
   }
 
   function toggleDailyDays() {
     setScheduleDailyEnabled((previous) => {
       const next = !previous;
-      if (next) {
-        setScheduleForm((current) => ({
-          ...current,
-          days: {
-            mon: true,
-            tue: true,
-            wed: true,
-            thu: true,
-            fri: true,
-            sat: true,
-            sun: true,
-          },
-        }));
-      }
+      setScheduleForm((current) => ({
+        ...current,
+        days: {
+          mon: next,
+          tue: next,
+          wed: next,
+          thu: next,
+          fri: next,
+          sat: next,
+          sun: next,
+        },
+      }));
       return next;
     });
   }
@@ -1055,9 +1253,6 @@ export default function App() {
     setIntroMode(true);
     setIntroFadingOut(false);
     setQuery("");
-    setRunId("");
-    setRunState(null);
-    stopRequestedRef.current = false;
     setBusy(false);
     setOpenReportMenu("");
     setMessages([]);
@@ -1088,7 +1283,7 @@ export default function App() {
   function handleSubmit(event) {
     event.preventDefault();
     if (busy) {
-      handleStop();
+      void handleStop();
     } else {
       handleSearch();
     }
@@ -1168,14 +1363,10 @@ export default function App() {
   const trimmedEmail = emailTo.trim();
   const isEmailValid = EMAIL_REGEX.test(trimmedEmail);
   const showEmailError = showEmailValidation && !isEmailValid;
-  const mappedRunningStatus = formatSearchStep(runState?.step);
-  const runningStepNormalized = String(runState?.step || "").toLowerCase();
-  const runningStatusText = runningStepNormalized.includes("fetch")
-    ? `${randomLoadingWord}...`
-    : mappedRunningStatus;
   const scheduleLocked = !scheduleForm.enabled;
 
   return (
+    <>
     <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : "sidebar-open"} ${sidebarAnimating ? "tooltips-disabled" : ""}`}>
       <input
         ref={fileInputRef}
@@ -1343,6 +1534,15 @@ export default function App() {
           </div>
         )}
         <div className={`chat-column ${introMode ? "intro-mode" : "docked-mode"}`}>
+        {dragActive && createPortal(
+          <div className="resume-drop-overlay" aria-hidden="true">
+            <div className="resume-drop-overlay-card">
+              <FontAwesomeIcon icon={faFileArrowUp} className="resume-drop-overlay-icon" />
+              <p>Drop your resume anywhere (.pdf)</p>
+            </div>
+          </div>,
+          document.body,
+        )}
         {introMode && (
           <div className={`intro-shell ${introFadingOut ? "fade-out" : ""} ${returningToIntro ? "entering" : ""}`}>
             <h1>Drop a resume. Start the hunt.</h1>
@@ -1363,7 +1563,7 @@ export default function App() {
                           }
                         }}
                         onMouseLeave={hideTooltip}
-                        disabled={busy && !runId}
+                        disabled={busy}
                         aria-label="Upload another resume"
                       >
                         <FontAwesomeIcon icon={faPlus} />
@@ -1415,7 +1615,7 @@ export default function App() {
                         }
                       }}
                       onMouseLeave={hideTooltip}
-                      disabled={busy && !runId}
+                      disabled={busy}
                       aria-label={hasResume ? "Toggle resumes" : "Upload resume"}
                     >
                       {hasResume ? (
@@ -1503,22 +1703,25 @@ export default function App() {
             </div>
           ))}
 
-          {runState?.status === "running" && (
+          {busy && (
             <div className="chat-message assistant">
-              <div className="loading-status-row">
-                {runningStatusText ? (
-                  <div className="assistant-text status-shimmer">{runningStatusText}</div>
+              <div className="loading-status-row search-progress-panel">
+                {searchStatusVisible && (searchDisplay.headline || searchDisplay.subline) ? (
+                  <div key={searchStatusKey} className="search-progress-copy search-progress-fade">
+                    {searchDisplay.headline && (
+                      <div className={`search-progress-headline ${searchDisplay.shimmer ? "status-shimmer" : ""}`}>
+                        {searchDisplay.headline}
+                      </div>
+                    )}
+                    {searchDisplay.subline && (
+                      <div className="search-progress-subline">
+                        {searchDisplay.subline}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <SafeLottie animationData={loadingAnimation} className="loading-lottie" />
                 )}
-              </div>
-            </div>
-          )}
-
-          {busy && runState?.status !== "running" && (
-            <div className="chat-message assistant">
-              <div className="loading-status-row">
-                <SafeLottie animationData={loadingAnimation} className="loading-lottie" />
               </div>
             </div>
           )}
@@ -1545,7 +1748,7 @@ export default function App() {
                       }
                     }}
                     onMouseLeave={hideTooltip}
-                    disabled={busy && !runId}
+                    disabled={busy}
                     aria-label="Upload another resume"
                   >
                     <FontAwesomeIcon icon={faPlus} />
@@ -1597,7 +1800,7 @@ export default function App() {
                     }
                   }}
                   onMouseLeave={hideTooltip}
-                  disabled={busy && !runId}
+                  disabled={busy}
                   aria-label={hasResume ? "Toggle resumes" : "Upload resume"}
                 >
                   {hasResume ? (
@@ -1687,10 +1890,20 @@ export default function App() {
         {scheduleModalOpen && createPortal(
           <div className="schedule-modal-backdrop" onClick={handleCancelScheduleModal}>
             <div className="schedule-modal-card" onClick={(event) => event.stopPropagation()}>
-              <h3 className="schedule-modal-title">
-                <FontAwesomeIcon icon={faCalendarDays} />
-                <span>Schedule Job Search</span>
-              </h3>
+              <div className="schedule-modal-header">
+                <h3 className="schedule-modal-title">
+                  <span>Schedule Job Search</span>
+                </h3>
+                <button
+                  type="button"
+                  className="modal-icon-close"
+                  onClick={handleCancelScheduleModal}
+                  aria-label="Close schedule modal"
+                >
+                  <FontAwesomeIcon icon={faCalendarDays} className="modal-header-icon modal-header-icon-primary" />
+                  <FontAwesomeIcon icon={faXmark} className="modal-header-icon modal-header-icon-close" />
+                </button>
+              </div>
               <p className="schedule-modal-caption">
                 Choose when automatic searches run and where scheduled reports should be sent.
               </p>
@@ -1839,11 +2052,11 @@ export default function App() {
             <div className="schedule-modal-card profile-modal-card" onClick={(event) => event.stopPropagation()}>
               <div className="profile-modal-header">
                 <h3 className="schedule-modal-title">
-                  <FontAwesomeIcon icon={faCircleUser} />
                   <span>Profile</span>
                 </h3>
-                <button type="button" className="profile-modal-close" onClick={closeProfileModal} aria-label="Close profile modal">
-                  <FontAwesomeIcon icon={faXmark} />
+                <button type="button" className="modal-icon-close" onClick={closeProfileModal} aria-label="Close profile modal">
+                  <FontAwesomeIcon icon={faCircleUser} className="modal-header-icon modal-header-icon-primary" />
+                  <FontAwesomeIcon icon={faXmark} className="modal-header-icon modal-header-icon-close" />
                 </button>
               </div>
               <p className="schedule-modal-caption">Edit your search profile.</p>
@@ -1913,5 +2126,8 @@ export default function App() {
         </div>
       </section>
     </main>
+    <Analytics />
+    <SpeedInsights />
+    </>
   );
 }

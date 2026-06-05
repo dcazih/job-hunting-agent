@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 import pymupdf
-from cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
+from job_tools.cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -97,13 +97,7 @@ def load_preferences_text() -> str:
         if text:
             return text
     if not DEFAULT_PREFERENCES.exists():
-        # Safe default so first deploy does not hard-fail before user saves preferences.
-        default_text = "Prioritize software engineering roles aligned with my resume."
-        if cloud_enabled():
-            cloud_set_json("profile.preferences", default_text)
-            return default_text
-        DEFAULT_PREFERENCES.write_text(default_text, encoding="utf-8")
-        return default_text
+        return ""
 
     return DEFAULT_PREFERENCES.read_text(encoding="utf-8").strip()
 

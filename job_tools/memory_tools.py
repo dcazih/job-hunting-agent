@@ -1,6 +1,6 @@
 from langchain.tools import tool
 
-from memory_store import (
+from job_tools.memory_store import (
     add_job_preference,
     add_company_feedback,
     add_role_feedback,
@@ -9,6 +9,10 @@ from memory_store import (
     load_memory,
     memory_as_text,
 )
+
+
+def _tool_log(name: str) -> None:
+    print(f"TOOL: {name}")
 
 
 @tool
@@ -20,6 +24,7 @@ def remember_job_preference(preference: str) -> dict:
     or 'from now on prioritize backend roles'.
     """
 
+    _tool_log("remember_job_preference")
     item = add_job_preference(preference)
 
     return {
@@ -36,6 +41,7 @@ def remember_company_feedback(company: str, feedback: str) -> dict:
     Use this when the user gives company-specific instructions or opinions.
     """
 
+    _tool_log("remember_company_feedback")
     item = add_company_feedback(company=company, feedback=feedback)
 
     return {
@@ -52,6 +58,7 @@ def remember_role_feedback(role_or_keyword: str, feedback: str) -> dict:
     Use this when the user says a certain role or skill should be prioritized or avoided.
     """
 
+    _tool_log("remember_role_feedback")
     item = add_role_feedback(role_or_keyword=role_or_keyword, feedback=feedback)
 
     return {
@@ -73,6 +80,7 @@ def remember_job_feedback(
     Use this when the user says a specific job was a good or bad match.
     """
 
+    _tool_log("remember_job_feedback")
     item = add_job_feedback(
         job_id=job_id,
         title=title,
@@ -93,6 +101,7 @@ def read_agent_memory() -> dict:
     Read all saved user preferences and feedback memory.
     Use this before scoring jobs or when the user asks what the agent remembers.
     """
+    _tool_log("read_agent_memory")
 
     return {
         "memory": load_memory(),
@@ -106,6 +115,7 @@ def forget_memory_item(memory_id: str) -> dict:
     Delete a saved memory item by its memory ID.
     Use this when the user says to forget or remove a specific remembered item.
     """
+    _tool_log("forget_memory_item")
 
     deleted = delete_memory_item(memory_id)
 

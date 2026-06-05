@@ -43,11 +43,13 @@ def score_single_job(job, resume_text, preferences_text):
     model = get_scoring_model()
 
     description = shorten_text(job.get("description", ""), max_chars=6000)
+    safe_preferences = str(preferences_text or "").strip()
 
     prompt = f"""
 You are a strict job-matching evaluator.
 
 Score this job from 1 to 100 based on the candidate's resume and preferences.
+If preferences are missing or vague, ignore them and score against the resume only.
 
 Be skeptical. Do not inflate scores.
 
@@ -72,7 +74,7 @@ Candidate resume:
 {resume_text}
 
 Candidate preferences:
-{preferences_text}
+{safe_preferences}
 
 Job:
 Title: {job.get("title")}
@@ -90,8 +92,9 @@ Description:
     return result.model_dump()
 
 
-def score_jobs(jobs, resume_text, preferences_text, is_canceled=None):
+def score_jobs(jobs, resume_text, preferences_text, is_canceled=None, on_progress=None):
     scored_jobs = []
+    total = len(jobs)
 
     for index, job in enumerate(jobs, start=1):
         if callable(is_canceled) and is_canceled():
@@ -115,6 +118,9 @@ def score_jobs(jobs, resume_text, preferences_text, is_canceled=None):
             **job,
             **score_data
         })
+
+        if callable(on_progress):
+            on_progress(index=index, total=total, job=job, scored_job=scored_jobs[-1])
 
     scored_jobs.sort(key=lambda item: item.get("score", 0), reverse=True)
 

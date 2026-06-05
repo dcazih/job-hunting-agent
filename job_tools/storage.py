@@ -2,7 +2,7 @@ from pathlib import Path
 from datetime import datetime
 import json
 import os
-from cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
+from job_tools.cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -38,6 +38,23 @@ def save_seen_job_ids(job_ids):
         return
     existing = load_seen_job_ids()
     updated = existing.union(set(job_ids))
+
+    with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as file:
+        json.dump(sorted(list(updated)), file, indent=2)
+
+
+def remove_seen_job_ids(job_ids):
+    ids_to_remove = set(job_ids or [])
+    if not ids_to_remove:
+        return
+    if cloud_enabled():
+        existing = set(cloud_get_json("jobs.seen_ids", []) or [])
+        updated = sorted(list(existing.difference(ids_to_remove)))
+        cloud_set_json("jobs.seen_ids", updated)
+        return
+
+    existing = load_seen_job_ids()
+    updated = existing.difference(ids_to_remove)
 
     with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as file:
         json.dump(sorted(list(updated)), file, indent=2)
