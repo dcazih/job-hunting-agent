@@ -371,9 +371,48 @@ def _run_search_pipeline_core(
                 "found_so_far": 0,
             },
         )
-        profile = load_profile_from_files()
+        try:
+            profile = load_profile_from_files()
+        except FileNotFoundError as error:
+            set_search_run_progress(
+                run_id,
+                status="failed",
+                progress=100,
+                step="Missing resume",
+                error=str(error),
+                result={
+                    "phase": "failed",
+                    "status": "missing_resume",
+                    "message": str(error),
+                },
+            )
+            return {
+                "status": "missing_resume",
+                "message": str(error),
+                "error": str(error),
+            }
+
         resume_text = str(profile.get("resume_text", "") or "")
         preferences_text = str(profile.get("preferences_text", "") or "")
+        if not resume_text.strip():
+            message = "No resume found. Add either profile/resume.pdf or profile/resume.txt."
+            set_search_run_progress(
+                run_id,
+                status="failed",
+                progress=100,
+                step="Missing resume",
+                error=message,
+                result={
+                    "phase": "failed",
+                    "status": "missing_resume",
+                    "message": message,
+                },
+            )
+            return {
+                "status": "missing_resume",
+                "message": message,
+                "error": message,
+            }
         memory_text = memory_as_text()
 
         search_term = str(target_industry or "").strip() or "software engineer"

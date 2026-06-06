@@ -24,6 +24,7 @@ from job_tools.resume_loader import (
     DEFAULT_RESUME_TXT,
     load_candidate_profile,
     refresh_resume_text_from_pdf,
+    store_resume_text,
 )
 from job_tools.storage import (
     load_latest_report,
@@ -572,8 +573,11 @@ def get_preferences() -> dict[str, Any]:
 
 
 def get_resume_status() -> dict[str, Any]:
+    cached_resume_text = ""
+    if cloud_enabled():
+        cached_resume_text = str(cloud_get_json("profile.resume_text", "") or "").strip()
     return {
-        "found": DEFAULT_RESUME_PDF.exists(),
+        "found": DEFAULT_RESUME_PDF.exists() or bool(cached_resume_text),
         "resume_path": str(DEFAULT_RESUME_PDF),
     }
 
@@ -649,6 +653,7 @@ def delete_uploaded_resume(upload_name: str) -> dict[str, Any]:
                 DEFAULT_RESUME_PDF.unlink()
             if DEFAULT_RESUME_TXT.exists():
                 DEFAULT_RESUME_TXT.unlink()
+            store_resume_text("")
     else:
         new_active = active_upload_name
 

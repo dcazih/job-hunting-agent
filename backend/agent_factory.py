@@ -56,6 +56,7 @@ Memory rules:
 Resume rules:
 - Never score jobs without loading the candidate profile first.
 - If resume/profile files are missing, stop and ask user to upload resume first.
+- If `run_search_pipeline` returns `status="missing_resume"`, stop and ask the user to upload a resume before searching.
 
 Reporting rules:
 - Use report tools for report requests.

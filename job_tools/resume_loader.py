@@ -74,6 +74,11 @@ def load_resume_text() -> str:
     Otherwise extract from profile/resume.pdf.
     """
 
+    if cloud_enabled():
+        cached_text = str(cloud_get_json("profile.resume_text", "") or "").strip()
+        if cached_text:
+            return cached_text
+
     if DEFAULT_RESUME_TXT.exists():
         return DEFAULT_RESUME_TXT.read_text(encoding="utf-8").strip()
 
@@ -88,6 +93,16 @@ def load_resume_text() -> str:
     raise FileNotFoundError(
         "No resume found. Add either profile/resume.pdf or profile/resume.txt."
     )
+
+
+def store_resume_text(text: str) -> None:
+    cleaned = str(text or "").strip()
+    if cloud_enabled():
+        cloud_set_json("profile.resume_text", cleaned)
+    if cleaned:
+        DEFAULT_RESUME_TXT.write_text(cleaned, encoding="utf-8")
+    elif DEFAULT_RESUME_TXT.exists():
+        DEFAULT_RESUME_TXT.unlink()
 
 
 def load_preferences_text() -> str:
@@ -115,7 +130,7 @@ def refresh_resume_text_from_pdf() -> str:
     """
 
     extracted = extract_text_from_pdf(DEFAULT_RESUME_PDF)
-    DEFAULT_RESUME_TXT.write_text(extracted, encoding="utf-8")
+    store_resume_text(extracted)
     return extracted
 
 
