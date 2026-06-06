@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { HiMenuAlt1 } from "react-icons/hi";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/react";
@@ -53,6 +54,40 @@ const DEFAULT_SCHEDULE = {
   pages: 1,
   email_to: "",
 };
+const INTRO_SEARCH_SUGGESTIONS = [
+  "Search for software engineering jobs in California",
+  "Look for mobile development jobs at Google",
+  "Find product design roles in New York",
+  "Search for data analyst jobs in Chicago",
+  "Look for remote frontend jobs",
+  "Find machine learning jobs at startups",
+  "Search for cybersecurity roles in Texas",
+  "Look for backend engineering jobs in Seattle",
+  "Find frontend roles at startups",
+  "Look for backend jobs in Austin",
+  "Search for data science roles in New York",
+  "Find product manager jobs in San Francisco",
+  "Look for remote DevOps roles",
+  "Search for cybersecurity jobs at Microsoft",
+  "Find QA engineering jobs in Chicago",
+  "Look for iOS development jobs at Apple",
+  "Search for machine learning jobs in Seattle",
+];
+const INTRO_SUGGESTION_ROTATE_MS = 15000;
+const INTRO_SUGGESTION_FADE_MS = 220;
+
+function getRandomIntroSuggestion(exclude = "") {
+  if (INTRO_SEARCH_SUGGESTIONS.length === 0) {
+    return "";
+  }
+  if (INTRO_SEARCH_SUGGESTIONS.length === 1) {
+    return INTRO_SEARCH_SUGGESTIONS[0];
+  }
+
+  const filtered = INTRO_SEARCH_SUGGESTIONS.filter((suggestion) => suggestion !== exclude);
+  const pool = filtered.length > 0 ? filtered : INTRO_SEARCH_SUGGESTIONS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 
 function getSessionId() {
   const storageKey = "job_hunting_agent_session_id";
@@ -250,6 +285,9 @@ export default function App() {
     "Chasing Leads",
   ];
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobileLayout, setIsMobileLayout] = useState(() => typeof window !== "undefined" && window.innerWidth <= 860);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [mobileSidebarClosing, setMobileSidebarClosing] = useState(false);
   const [collapsedHoverArmed, setCollapsedHoverArmed] = useState(false);
   const [collapsedHoverActive, setCollapsedHoverActive] = useState(false);
   const [sidebarAnimating, setSidebarAnimating] = useState(false);
@@ -277,7 +315,9 @@ export default function App() {
   const [showEmailValidation, setShowEmailValidation] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleLoadingSlow, setScheduleLoadingSlow] = useState(false);
   const [scheduleSaving, setScheduleSaving] = useState(false);
+  const scheduleLoadingTimerRef = useRef(null);
   const [scheduleForm, setScheduleForm] = useState(DEFAULT_SCHEDULE);
   const [scheduleDailyEnabled, setScheduleDailyEnabled] = useState(false);
   const [showScheduleEmailValidation, setShowScheduleEmailValidation] = useState(false);
@@ -293,6 +333,8 @@ export default function App() {
   const [introMode, setIntroMode] = useState(true);
   const [introFadingOut, setIntroFadingOut] = useState(false);
   const [returningToIntro, setReturningToIntro] = useState(false);
+  const [introSuggestion, setIntroSuggestion] = useState(() => getRandomIntroSuggestion());
+  const [introSuggestionFadingOut, setIntroSuggestionFadingOut] = useState(false);
   const [hasResume, setHasResume] = useState(false);
   const [resumeUploads, setResumeUploads] = useState([]);
   const [resumePickerOpen, setResumePickerOpen] = useState(false);
@@ -300,6 +342,28 @@ export default function App() {
   const [dragActive, setDragActive] = useState(false);
   const [floatingTooltip, setFloatingTooltip] = useState({ visible: false, text: "", top: 0, left: 0, placement: "left" });
   const [pulsingResumeName, setPulsingResumeName] = useState("");
+
+  function openMobileSidebar() {
+    if (mobileSidebarCloseTimerRef.current) {
+      clearTimeout(mobileSidebarCloseTimerRef.current);
+      mobileSidebarCloseTimerRef.current = null;
+    }
+    setMobileSidebarClosing(false);
+    setMobileSidebarOpen(true);
+  }
+
+  function closeMobileSidebar() {
+    if (!mobileSidebarOpen || mobileSidebarClosing) return;
+    setMobileSidebarClosing(true);
+    if (mobileSidebarCloseTimerRef.current) {
+      clearTimeout(mobileSidebarCloseTimerRef.current);
+    }
+    mobileSidebarCloseTimerRef.current = setTimeout(() => {
+      setMobileSidebarOpen(false);
+      setMobileSidebarClosing(false);
+      mobileSidebarCloseTimerRef.current = null;
+    }, 220);
+  }
 
   const messageRefs = useRef({});
   const chatContentRef = useRef(null);
@@ -316,6 +380,9 @@ export default function App() {
   const chatAbortRef = useRef(null);
   const dragDepthRef = useRef(0);
   const dragClearTimerRef = useRef(null);
+  const introSuggestionRotateTimerRef = useRef(null);
+  const introSuggestionFadeTimerRef = useRef(null);
+  const mobileSidebarCloseTimerRef = useRef(null);
   const searchSummaryHoldUntilRef = useRef(0);
   const searchRunIdRef = useRef("");
   const bottomTextareaHeightRef = useRef(0);
@@ -621,10 +688,6 @@ export default function App() {
       }
       textarea.focus();
       setQuery((previous) => `${previous}${pastedText}`);
-      requestAnimationFrame(() => {
-        const end = textarea.value.length;
-        textarea.setSelectionRange(end, end);
-      });
     }
 
     document.addEventListener("paste", handleGlobalPasteToFocus);
@@ -988,6 +1051,13 @@ export default function App() {
     setScheduleModalOpen(true);
     setShowScheduleEmailValidation(false);
     setScheduleLoading(true);
+    setScheduleLoadingSlow(false);
+    if (scheduleLoadingTimerRef.current) {
+      clearTimeout(scheduleLoadingTimerRef.current);
+    }
+    scheduleLoadingTimerRef.current = setTimeout(() => {
+      setScheduleLoadingSlow(true);
+    }, 6000);
     try {
       const payload = await api("/api/schedule");
       const normalized = normalizeSchedulePayload(payload);
@@ -999,13 +1069,30 @@ export default function App() {
       setScheduleDailyEnabled(Object.values(DEFAULT_SCHEDULE.days).every(Boolean));
     } finally {
       setScheduleLoading(false);
+      setScheduleLoadingSlow(false);
+      if (scheduleLoadingTimerRef.current) {
+        clearTimeout(scheduleLoadingTimerRef.current);
+        scheduleLoadingTimerRef.current = null;
+      }
     }
   }
 
   function handleCancelScheduleModal() {
     setScheduleModalOpen(false);
     setShowScheduleEmailValidation(false);
+    setScheduleLoading(false);
+    setScheduleLoadingSlow(false);
+    if (scheduleLoadingTimerRef.current) {
+      clearTimeout(scheduleLoadingTimerRef.current);
+      scheduleLoadingTimerRef.current = null;
+    }
   }
+
+  useEffect(() => () => {
+    if (scheduleLoadingTimerRef.current) {
+      clearTimeout(scheduleLoadingTimerRef.current);
+    }
+  }, []);
 
   function toggleScheduleDay(dayKey) {
     setScheduleForm((previous) => {
@@ -1252,6 +1339,8 @@ export default function App() {
     setReturningToIntro(true);
     setIntroMode(true);
     setIntroFadingOut(false);
+    setIntroSuggestion(() => getRandomIntroSuggestion());
+    setIntroSuggestionVisible(true);
     setQuery("");
     setBusy(false);
     setOpenReportMenu("");
@@ -1293,6 +1382,14 @@ export default function App() {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       handleSubmit(event);
+      return;
+    }
+
+    if (introMode && event.key === "Tab" && !event.shiftKey) {
+      event.preventDefault();
+      if (!query.trim()) {
+        setQuery(introSuggestion);
+      }
     }
   }
 
@@ -1300,7 +1397,8 @@ export default function App() {
     if (!textarea) return;
     const current = textarea.getBoundingClientRect().height;
     textarea.style.height = "auto";
-    const natural = textarea.scrollHeight;
+    const content = textarea.value.length > 0 ? textarea.value : String(textarea.placeholder || "");
+    const natural = content ? measureTextareaHeight(textarea, content) : textarea.scrollHeight;
     const maxHeight = 220;
     const target = Math.min(natural, maxHeight);
     textarea.classList.toggle("at-max-height", natural > maxHeight + 1);
@@ -1318,6 +1416,57 @@ export default function App() {
     void textarea.offsetHeight;
     textarea.style.height = `${target}px`;
     bottomTextareaHeightRef.current = target;
+  }
+
+  function measureTextareaHeight(textarea, text) {
+    const clone = document.createElement("textarea");
+    const computedStyle = window.getComputedStyle(textarea);
+    const width = textarea.getBoundingClientRect().width || Number.parseFloat(computedStyle.width) || 0;
+    const sizingProps = [
+      "boxSizing",
+      "width",
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+      "borderTopWidth",
+      "borderRightWidth",
+      "borderBottomWidth",
+      "borderLeftWidth",
+      "fontFamily",
+      "fontSize",
+      "fontWeight",
+      "fontStyle",
+      "lineHeight",
+      "letterSpacing",
+      "textTransform",
+      "textIndent",
+      "wordSpacing",
+      "tabSize",
+      "whiteSpace",
+      "overflowWrap",
+      "wordBreak",
+    ];
+
+    clone.style.position = "absolute";
+    clone.style.visibility = "hidden";
+    clone.style.top = "-9999px";
+    clone.style.left = "-9999px";
+    clone.style.height = "auto";
+    clone.style.overflow = "hidden";
+    clone.rows = 1;
+    clone.value = text;
+    if (width > 0) {
+      clone.style.width = `${width}px`;
+    }
+    sizingProps.forEach((property) => {
+      clone.style[property] = computedStyle[property];
+    });
+
+    document.body.appendChild(clone);
+    const height = clone.scrollHeight;
+    clone.remove();
+    return height;
   }
 
   function resizeBottomComposerTextarea() {
@@ -1352,22 +1501,116 @@ export default function App() {
   }, [introMode, resumePickerOpen]);
 
   useEffect(() => {
+    resizeBottomComposerTextarea();
+    resizeIntroComposerTextarea();
+  }, [query]);
+
+  useEffect(() => {
+    resizeBottomComposerTextarea();
+    resizeIntroComposerTextarea();
+  }, [introSuggestion]);
+
+  useEffect(() => {
+    if (!introMode) return;
+    setIntroSuggestion(() => getRandomIntroSuggestion());
+    setIntroSuggestionFadingOut(false);
+  }, [introMode]);
+
+  useEffect(() => {
+    if (!introMode || query.trim()) {
+      if (introSuggestionRotateTimerRef.current) {
+        clearTimeout(introSuggestionRotateTimerRef.current);
+        introSuggestionRotateTimerRef.current = null;
+      }
+      if (introSuggestionFadeTimerRef.current) {
+        clearTimeout(introSuggestionFadeTimerRef.current);
+        introSuggestionFadeTimerRef.current = null;
+      }
+      setIntroSuggestionFadingOut(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    function scheduleNextRotation() {
+      if (cancelled) return;
+      if (introSuggestionRotateTimerRef.current) {
+        clearTimeout(introSuggestionRotateTimerRef.current);
+      }
+      introSuggestionRotateTimerRef.current = window.setTimeout(() => {
+        if (cancelled || query.trim()) return;
+        setIntroSuggestionFadingOut(true);
+        if (introSuggestionFadeTimerRef.current) {
+          clearTimeout(introSuggestionFadeTimerRef.current);
+        }
+
+        introSuggestionFadeTimerRef.current = window.setTimeout(() => {
+          if (cancelled || query.trim()) return;
+          setIntroSuggestion((previousSuggestion) => getRandomIntroSuggestion(previousSuggestion));
+          setIntroSuggestionFadingOut(false);
+          scheduleNextRotation();
+        }, INTRO_SUGGESTION_FADE_MS);
+      }, INTRO_SUGGESTION_ROTATE_MS);
+    }
+
+    scheduleNextRotation();
+
+    return () => {
+      cancelled = true;
+      if (introSuggestionRotateTimerRef.current) {
+        clearTimeout(introSuggestionRotateTimerRef.current);
+        introSuggestionRotateTimerRef.current = null;
+      }
+      if (introSuggestionFadeTimerRef.current) {
+        clearTimeout(introSuggestionFadeTimerRef.current);
+        introSuggestionFadeTimerRef.current = null;
+      }
+      setIntroSuggestionFadingOut(false);
+    };
+  }, [introMode, query]);
+
+  useEffect(() => {
     function handleWindowResize() {
       resizeBottomComposerTextarea();
       resizeIntroComposerTextarea();
+      const nextIsMobile = window.innerWidth <= 860;
+      setIsMobileLayout(nextIsMobile);
+      if (!nextIsMobile) {
+        setMobileSidebarOpen(false);
+        setMobileSidebarClosing(false);
+        if (mobileSidebarCloseTimerRef.current) {
+          clearTimeout(mobileSidebarCloseTimerRef.current);
+          mobileSidebarCloseTimerRef.current = null;
+        }
+      }
     }
     window.addEventListener("resize", handleWindowResize);
+    handleWindowResize();
     return () => window.removeEventListener("resize", handleWindowResize);
   }, []);
 
+  useEffect(() => {
+    if (!isMobileLayout || !(mobileSidebarOpen || mobileSidebarClosing)) {
+      document.body.style.overflow = "";
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobileLayout, mobileSidebarOpen, mobileSidebarClosing]);
+
   const trimmedEmail = emailTo.trim();
+  const canSubmitQuery = query.trim().length > 0;
   const isEmailValid = EMAIL_REGEX.test(trimmedEmail);
   const showEmailError = showEmailValidation && !isEmailValid;
   const scheduleLocked = !scheduleForm.enabled;
 
   return (
     <>
-    <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : "sidebar-open"} ${sidebarAnimating ? "tooltips-disabled" : ""}`}>
+    <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : "sidebar-open"} ${isMobileLayout ? "mobile-layout" : ""} ${isMobileLayout ? "tooltips-disabled" : sidebarAnimating ? "tooltips-disabled" : ""}`}>
       <input
         ref={fileInputRef}
         type="file"
@@ -1375,57 +1618,86 @@ export default function App() {
         className="visually-hidden-file-input"
         onChange={handleResumeInputChange}
       />
-      <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+      {isMobileLayout && (
+        <header className="mobile-header">
+          <button
+            type="button"
+            className="mobile-menu-button"
+            aria-label="Open sidebar"
+            onClick={openMobileSidebar}
+          >
+            <HiMenuAlt1 />
+          </button>
+          <h1 className="mobile-header-title">Job-Hunting Agent</h1>
+        </header>
+      )}
+
+      {isMobileLayout && mobileSidebarOpen && !mobileSidebarClosing && (
+        <div className="mobile-sidebar-backdrop" onClick={closeMobileSidebar} aria-hidden="true" />
+      )}
+
+      <aside className={`sidebar ${!isMobileLayout && sidebarCollapsed ? "collapsed" : ""} ${isMobileLayout ? "mobile" : ""} ${isMobileLayout && mobileSidebarOpen ? "mobile-open" : ""} ${isMobileLayout && mobileSidebarClosing ? "mobile-closing" : ""}`}>
         <div className="sidebar-top">
-          <div className="brand-box" aria-hidden={sidebarCollapsed}>
+          <div className="brand-box" aria-hidden={sidebarCollapsed || isMobileLayout}>
             <h2>Job-Hunting Agent</h2>
           </div>
 
-          <button
-            className="icon-button sidebar-toggle has-tooltip sidebar-tooltip-side"
-            data-tooltip={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
-            aria-label={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
-            onMouseEnter={() => {
-              if (sidebarCollapsed && collapsedHoverArmed) {
-                setCollapsedHoverActive(true);
-              }
-            }}
-            onMouseLeave={() => {
-              if (sidebarCollapsed) {
-                setCollapsedHoverActive(false);
-                setCollapsedHoverArmed(true);
-              }
-            }}
-            onClick={() => {
-              setSidebarAnimating(true);
-              if (sidebarAnimTimerRef.current) {
-                clearTimeout(sidebarAnimTimerRef.current);
-              }
-              sidebarAnimTimerRef.current = setTimeout(() => {
-                setSidebarAnimating(false);
-              }, 230);
-
-              setSidebarCollapsed((value) => {
-                const next = !value;
-                if (next) {
-                  setCollapsedHoverArmed(false);
-                  setCollapsedHoverActive(false);
-                } else {
-                  setCollapsedHoverArmed(false);
-                  setCollapsedHoverActive(false);
+          {isMobileLayout ? (
+            <div className="sidebar-mobile-header">
+              <button type="button" className="sidebar-mobile-target-button" aria-label="Target">
+                <FontAwesomeIcon icon={faCrosshairs} className="sidebar-mobile-target-icon" />
+              </button>
+              <button
+                type="button"
+                className="icon-button sidebar-mobile-close"
+                aria-label="Close sidebar"
+                onClick={closeMobileSidebar}
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+          ) : (
+            <button
+              className="icon-button sidebar-toggle has-tooltip sidebar-tooltip-side"
+              data-tooltip={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
+              aria-label={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
+              onMouseEnter={() => {
+                if (sidebarCollapsed && collapsedHoverArmed) {
+                  setCollapsedHoverActive(true);
                 }
-                return next;
-              });
-            }}
-          >
-            {!sidebarCollapsed && <FontAwesomeIcon icon={faRightToBracket} rotation={180} />}
-            {sidebarCollapsed && (
-              <span className={`collapsed-toggle-icons ${collapsedHoverActive ? "hover-active" : ""}`}>
-                <FontAwesomeIcon icon={faCrosshairs} className="bullseye-icon" />
-                <FontAwesomeIcon icon={faRightToBracket} className="open-icon" />
-              </span>
-            )}
-          </button>
+              }}
+              onMouseLeave={() => {
+                if (sidebarCollapsed) {
+                  setCollapsedHoverActive(false);
+                  setCollapsedHoverArmed(true);
+                }
+              }}
+              onClick={() => {
+                setSidebarAnimating(true);
+                if (sidebarAnimTimerRef.current) {
+                  clearTimeout(sidebarAnimTimerRef.current);
+                }
+                sidebarAnimTimerRef.current = setTimeout(() => {
+                  setSidebarAnimating(false);
+                }, 230);
+
+                setSidebarCollapsed((value) => {
+                  const next = !value;
+                  setCollapsedHoverArmed(false);
+                  setCollapsedHoverActive(false);
+                  return next;
+                });
+              }}
+            >
+              {!sidebarCollapsed && <FontAwesomeIcon icon={faRightToBracket} rotation={180} />}
+              {sidebarCollapsed && (
+                <span className={`collapsed-toggle-icons ${collapsedHoverActive ? "hover-active" : ""}`}>
+                  <FontAwesomeIcon icon={faCrosshairs} className="bullseye-icon" />
+                  <FontAwesomeIcon icon={faRightToBracket} className="open-icon" />
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         <div className="sidebar-actions">
@@ -1631,12 +1903,12 @@ export default function App() {
 
                   <textarea
                     ref={introTextareaRef}
-                    className="bottom-composer-textarea"
+                    className={`bottom-composer-textarea intro-suggestion-fade ${introSuggestionFadingOut ? "placeholder-fade-out" : ""}`}
                     value={query}
                     onChange={handleIntroTextareaChange}
                     onKeyDown={onComposerKeyDown}
                     rows={1}
-                    placeholder="Type search query"
+                    placeholder={introSuggestion}
                   />
 
                   <button
@@ -1644,6 +1916,7 @@ export default function App() {
                     className="search-stop-button has-tooltip"
                     data-tooltip={busy ? "Stop prompt" : "Send prompt"}
                     aria-label={busy ? "Stop search" : "Run search"}
+                    disabled={!busy && !canSubmitQuery}
                   >
                     <FontAwesomeIcon icon={busy ? faStop : faArrowUp} />
                   </button>
@@ -1829,6 +2102,7 @@ export default function App() {
                 className="search-stop-button has-tooltip"
                 data-tooltip={busy ? "Stop prompt" : "Send prompt"}
                 aria-label={busy ? "Stop search" : "Run search"}
+                disabled={!busy && !canSubmitQuery}
               >
                 <FontAwesomeIcon icon={busy ? faStop : faArrowUp} />
               </button>
@@ -1908,7 +2182,7 @@ export default function App() {
                 Choose when automatic searches run and where scheduled reports should be sent.
               </p>
               {scheduleLoading ? (
-                <p className="muted">Loading schedule...</p>
+                <p className="muted">{scheduleLoadingSlow ? "Just a sec..." : "Loading schedule..."}</p>
               ) : (
                 <>
                   <div className="schedule-row">

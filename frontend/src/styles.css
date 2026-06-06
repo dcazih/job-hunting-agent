@@ -46,11 +46,25 @@ body {
 
 button, input, textarea { font: inherit; }
 
+svg,
+.svg-inline--fa,
+.svg-inline--fa * {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 .app-shell {
   --sidebar-w: 300px;
   min-height: 100vh;
   display: flex;
   isolation: isolate;
+}
+
+.app-shell.mobile-layout {
+  --sidebar-w: 0px;
 }
 
 .app-shell.sidebar-collapsed {
@@ -72,6 +86,10 @@ button, input, textarea { font: inherit; }
 
 .sidebar.collapsed { width: 72px; }
 
+.sidebar.mobile {
+  display: flex;
+}
+
 .sidebar-resize-handle {
   position: absolute;
   top: 0;
@@ -87,6 +105,10 @@ button, input, textarea { font: inherit; }
   justify-content: space-between;
   align-items: flex-start;
   padding: 0.95rem;
+}
+
+.mobile-header {
+  display: none;
 }
 
 .sidebar.collapsed .sidebar-top {
@@ -146,6 +168,8 @@ button, input, textarea { font: inherit; }
 
 .sidebar-actions {
   padding: 0 0.65rem 0.4rem;
+      padding-right:1.2em;
+
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
@@ -1063,8 +1087,9 @@ button, input, textarea { font: inherit; }
 
 .resume-icon-stack {
   position: relative;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
+  
 }
 
 .resume-toggle-button {
@@ -1146,7 +1171,7 @@ button, input, textarea { font: inherit; }
   width: 100%;
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) 42px;
-  align-items: end;
+  align-items: center;
 }
 
 .resume-icon-stack,
@@ -1169,6 +1194,8 @@ button, input, textarea { font: inherit; }
   padding: 0.5rem 0.35rem;
   border: none;
   border-radius: 8px;
+  /* background: #c90a0a;  */
+
   background: #363636;
   color: #f3f3f3;
   outline: none;
@@ -1184,6 +1211,16 @@ button, input, textarea { font: inherit; }
   will-change: height;
 }
 
+.bottom-composer-textarea.intro-suggestion-fade::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+  opacity: 1;
+  transition: opacity 220ms ease;
+}
+
+.bottom-composer-textarea.intro-suggestion-fade.placeholder-fade-out::placeholder {
+  opacity: 0;
+}
+
 .composer-shell textarea.bottom-composer-textarea.at-max-height {
   overflow-y: auto;
 }
@@ -1197,15 +1234,14 @@ button, input, textarea { font: inherit; }
   background: transparent;
   color: #dfdfdf;
   border-radius: 999px;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   transition: background-color 140ms ease;
   align-self: center;
-  transform:  translateY(-2px);
 }
 
 .upload-inline-button:hover {
@@ -1217,31 +1253,20 @@ button, input, textarea { font: inherit; }
   background: #2f6bff;
   color: #f2f7ff;
   border-radius: 999px;
-  width: 37px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   transition: opacity 140ms ease;
-  align-self: end;
-  transform: translateX(4px)  translateY(-2px);
-  
+  align-self: center;
 }
 
 .search-stop-button:hover {
   opacity: 0.78;
 }
 
-.intro-composer .search-stop-button {
-  transform: translateX(3px) translateY(-2.5px);
-}
-.intro-composer .search-stop-button svg[data-icon="arrow-up"] {
-  transform: translateX(1px);}
-
-.composer-overlay .search-stop-button svg {
-  transform: translateX(0.7px) translateY(1px);
-}
 .sidebar-toggle {
   border: none;
   background: transparent;
@@ -1998,10 +2023,180 @@ label[for="profile-preferences"] {
 }
 
 @media (max-width: 860px) {
-  .sidebar { width: 220px; }
-  .sidebar.collapsed { width: 64px; }
+  .app-shell.mobile-layout {
+    display: block;
+  }
+
+  .mobile-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 58px;
+    padding: 0 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    background: #111111;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    z-index: 4200;
+  }
+
+  .mobile-menu-button {
+    border: none;
+    background: transparent;
+    color: #ececec;
+    width: 38px;
+    height: 38px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .mobile-menu-button svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  .mobile-header-title {
+    margin: 0;
+    font-family: "MontserratCustom", "GeistCustom", sans-serif;
+    font-size: 1rem;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+  }
+
+  .mobile-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.54);
+    z-index: 4290;
+  }
+
+  .sidebar.mobile {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(84vw, 320px);
+    height: 100dvh;
+    z-index: 4300;
+    transform: translateX(-102%);
+    transition: transform 220ms ease;
+    pointer-events: none;
+    visibility: hidden;
+    box-shadow: 14px 0 30px rgba(0, 0, 0, 0.35);
+  }
+
+  .sidebar.mobile.mobile-open {
+    transform: translateX(0);
+    pointer-events: auto;
+    visibility: visible;
+  }
+
+  .sidebar.mobile.mobile-closing {
+    transform: translateX(-102%);
+    pointer-events: none;
+    visibility: visible;
+  }
+
+  .sidebar.mobile .sidebar-top {
+    align-items: center;
+    padding: 0.85rem 0.9rem 0.55rem;
+  }
+
+  .sidebar.mobile .brand-box {
+    display: none;
+  }
+
+  .sidebar-mobile-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .sidebar-mobile-target-button {
+    border: none;
+    background: transparent;
+    color: #ececec;
+    width: 40px;
+    height: 40px;
+    border-radius: 15px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: default;
+    padding: 0;
+  }
+
+  .sidebar-mobile-target-icon {
+    font-size: 1.5rem;
+    color: #ececec;
+  }
+  .sidebar-mobile-target-button:hover,
+  .sidebar-mobile-close:hover {
+    
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .sidebar-mobile-close {
+    border: none;
+    background: transparent;
+    color: #ececec;
+    width: 40px;
+    height: 40px;
+    border-radius: 15px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    overflow: hidden;
+  }
+
+  .sidebar-mobile-close svg {
+    display: block;
+    font-size: 1.35rem;
+  }
+
+  .sidebar.mobile .sidebar-actions {
+    padding-top: 0.6rem;
+  }
+
+  .sidebar.mobile .report-list {
+    padding-bottom: 1.5rem;
+  }
+
+  .app-shell.mobile-layout .chat-layout {
+    padding-top: 70px;
+    height: 100dvh;
+  }
+
+  .app-shell.mobile-layout .chat-column {
+    min-height: calc(100dvh - 70px - 1rem);
+    height: calc(100dvh - 70px - 1rem);
+  }
+
+  .app-shell.mobile-layout .composer-overlay {
+    left: 1rem;
+    right: 1.9rem;
+  }
+
+  .intro-shell h1 {
+    font-size: clamp(1.4rem, 5.8vw, 1.85rem);
+    font-weight: 550;
+  }
+
+  .intro-shell p {
+    font-size: 0.96rem;
+    margin-bottom: 1.8rem;
+  }
+
   .job-card { flex-basis: 280px; }
   .chat-column { max-width: 100%; }
-  .app-shell { --sidebar-w: 220px; }
-  .app-shell.sidebar-collapsed { --sidebar-w: 64px; }
 }
