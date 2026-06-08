@@ -974,6 +974,17 @@ export default function App() {
   }, [resumePickerOpen]);
 
   useEffect(() => {
+    function handleResumePickerScroll() {
+      if (!resumePickerOpen) return;
+      onResumeButtonClick();
+      hideTooltip();
+    }
+
+    window.addEventListener("scroll", handleResumePickerScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleResumePickerScroll);
+  }, [resumePickerOpen]);
+
+  useEffect(() => {
     if (!resumePickerOpen || !activeResumeName) return;
     const row = resumePickerRowRef.current;
     if (!row) return;
