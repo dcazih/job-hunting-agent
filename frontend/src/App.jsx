@@ -77,6 +77,15 @@ const INTRO_SEARCH_SUGGESTIONS = [
 const INTRO_SUGGESTION_ROTATE_MS = 15000;
 const INTRO_SUGGESTION_FADE_MS = 220;
 
+function normalizeSchedulePagesInput(value) {
+  const trimmedValue = String(value || "").trim();
+  const parsedValue = Number(trimmedValue);
+  if (!Number.isFinite(parsedValue)) {
+    return "";
+  }
+  return String(Math.min(4, Math.max(1, Math.trunc(parsedValue))));
+}
+
 function getRandomIntroSuggestion(exclude = "") {
   if (INTRO_SEARCH_SUGGESTIONS.length === 0) {
     return "";
@@ -1441,6 +1450,10 @@ export default function App() {
       setShowScheduleEmailValidation(true);
       return;
     }
+    const parsedPages = Number(String(scheduleForm.pages || "").trim());
+    const normalizedPages = Number.isFinite(parsedPages)
+      ? Math.min(4, Math.max(1, Math.trunc(parsedPages)))
+      : 1;
 
     setShowScheduleEmailValidation(false);
     setScheduleSaving(true);
@@ -1449,6 +1462,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({
           ...scheduleForm,
+          pages: normalizedPages,
           timezone: getBrowserTimeZone(),
           email_to: trimmedScheduleEmail,
         }),
@@ -1634,6 +1648,18 @@ export default function App() {
     });
   }
 
+  function showBottomTooltip(event, text) {
+    if (isMobileLayout) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setFloatingTooltip({
+      visible: true,
+      text,
+      top: rect.bottom + 10,
+      left: rect.left + rect.width / 2,
+      placement: "bottom",
+    });
+  }
+
   function showSidebarTooltip(event, text) {
     if (isMobileLayout) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -1724,6 +1750,12 @@ export default function App() {
   }
 
   function onComposerKeyDown(event) {
+    if (introMode && event.key === "Enter" && !event.shiftKey && !query.trim()) {
+      event.preventDefault();
+      setQuery(introSuggestion);
+      return;
+    }
+
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       handleSubmit(event);
@@ -2286,7 +2318,7 @@ export default function App() {
                   report={message.report}
                   onEmailLatest={openEmailModal}
                   emailBusy={emailBusy}
-                  onShowEmailTooltip={(event) => showRightTooltip(event, "Send email")}
+                  onShowEmailTooltip={(event) => showBottomTooltip(event, "Send email")}
                   onHideTooltip={hideTooltip}
                   isMobileLayout={isMobileLayout}
                   panelRef={(element) => { reportPanelRefs.current[message.id] = element; }}
@@ -2429,9 +2461,9 @@ export default function App() {
             </div>
           </div>
         </form>
-        {floatingTooltip.visible && createPortal(
-          <div
-            className={`floating-tooltip-left ${floatingTooltip.placement === "top" ? "floating-tooltip-top" : ""} ${floatingTooltip.placement === "right" ? "floating-tooltip-right" : ""}`}
+          {floatingTooltip.visible && createPortal(
+            <div
+            className={`floating-tooltip-left ${floatingTooltip.placement === "top" ? "floating-tooltip-top" : ""} ${floatingTooltip.placement === "right" ? "floating-tooltip-right" : ""} ${floatingTooltip.placement === "bottom" ? "floating-tooltip-bottom" : ""}`}
             style={{ top: `${floatingTooltip.top}px`, left: `${floatingTooltip.left}px` }}
           >
             {floatingTooltip.text}
@@ -2602,14 +2634,60 @@ export default function App() {
                       <label htmlFor="schedule-pages">Pages</label>
                       <input
                         id="schedule-pages"
-                        type="number"
-                        min={1}
-                        max={10}
+                        type="text"
+                        inputMode="numeric"
                         value={scheduleForm.pages}
                         disabled={scheduleLocked}
+                        onKeyDown={(event) => {
+                          if (
+                            event.ctrlKey ||
+                            event.metaKey ||
+                            event.altKey ||
+                            [
+                              "Backspace",
+                              "Delete",
+                              "ArrowLeft",
+                              "ArrowRight",
+                              "ArrowUp",
+                              "ArrowDown",
+                              "Tab",
+                              "Home",
+                              "End",
+                              "Enter",
+                            ].includes(event.key)
+                          ) {
+                            return;
+                          }
+                          if (!/^[0-9]$/.test(event.key)) {
+                            event.preventDefault();
+                            return;
+                          }
+                          if (!/^[1-4]$/.test(event.key)) {
+                            event.preventDefault();
+                            return;
+                          }
+                          event.preventDefault();
+                          setScheduleForm((previous) => ({ ...previous, pages: event.key }));
+                        }}
+                        onPaste={(event) => {
+                          event.preventDefault();
+                          const pastedText = event.clipboardData.getData("text");
+                          const normalizedValue = normalizeSchedulePagesInput(pastedText);
+                          if (normalizedValue !== "") {
+                            setScheduleForm((previous) => ({ ...previous, pages: normalizedValue }));
+                          } else {
+                            setScheduleForm((previous) => ({ ...previous, pages: "1" }));
+                          }
+                        }}
                         onChange={(event) => {
-                          const next = Number(event.target.value || 1);
-                          setScheduleForm((previous) => ({ ...previous, pages: Math.min(10, Math.max(1, next)) }));
+                          const normalizedValue = normalizeSchedulePagesInput(event.target.value);
+                          if (normalizedValue !== "") {
+                            setScheduleForm((previous) => ({ ...previous, pages: normalizedValue }));
+                          }
+                        }}
+                        onBlur={(event) => {
+                          const normalizedValue = normalizeSchedulePagesInput(event.target.value) || "1";
+                          setScheduleForm((previous) => ({ ...previous, pages: normalizedValue }));
                         }}
                       />
                     </div>
