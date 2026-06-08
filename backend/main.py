@@ -17,6 +17,7 @@ from backend.agent import (
     clear_current_resume_display_name,
     get_chat_active_run_id,
     get_chat_messages,
+    clear_chat_messages,
     get_search_run,
     get_search_schedule,
     delete_uploaded_resume,
@@ -285,6 +286,14 @@ def chat(payload: ChatRequest) -> dict:
     if report is not None:
         response["report"] = report
     return response
+
+
+@app.post("/api/chat/reset")
+def reset_chat(session_id: str = "default") -> dict:
+    normalized_session_id = str(session_id or "default").strip() or "default"
+    clear_chat_messages(normalized_session_id)
+    clear_chat_active_run_id(normalized_session_id)
+    return {"status": "ok"}
 
 
 @app.post("/api/chat/stop")

@@ -1746,11 +1746,26 @@ export default function App() {
     setResumeThumbTooltip({ visible: false, text: "", top: 0, left: 0 });
   }
 
-  function handleNewHunt() {
+  async function handleNewHunt() {
     if (isMobileLayout) {
       closeMobileSidebar();
     }
     if (introMode) return;
+
+    try {
+      if (chatAbortRef.current) {
+        chatAbortRef.current.abort();
+        chatAbortRef.current = null;
+      }
+      await api(`/api/chat/stop?session_id=${encodeURIComponent(sessionId)}`, {
+        method: "POST",
+      });
+      await api(`/api/chat/reset?session_id=${encodeURIComponent(sessionId)}`, {
+        method: "POST",
+      });
+    } catch (error) {
+      // Clear the UI regardless; backend reset is best-effort.
+    }
 
     setReturningToIntro(true);
     setIntroMode(true);
@@ -1760,6 +1775,16 @@ export default function App() {
     setQuery("");
     setBusy(false);
     setOpenReportMenu("");
+    setSelectedReportPath("");
+    setOpenResumeMessageId("");
+    setSearchStatusVisible(false);
+    setSearchDisplay({
+      headline: "",
+      subline: "",
+      shimmer: false,
+    });
+    searchSummaryHoldUntilRef.current = 0;
+    searchRunIdRef.current = "";
     setMessages([]);
 
     setTimeout(() => {
@@ -2124,7 +2149,7 @@ export default function App() {
         <div className="sidebar-actions">
           <button
             className="profile-button sidebar-action-button"
-            onClick={handleNewHunt}
+            onClick={() => { void handleNewHunt(); }}
             onMouseEnter={(event) => showSidebarTooltip(event, "New Hunt")}
             onFocus={(event) => showSidebarTooltip(event, "New Hunt")}
             onMouseLeave={hideTooltip}

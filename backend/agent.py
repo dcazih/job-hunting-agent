@@ -290,6 +290,12 @@ def save_chat_messages(session_id: str, messages: list[dict[str, Any]]) -> None:
         CHAT_SESSION_MESSAGES[normalized] = [dict(message) for message in messages]
 
 
+def clear_chat_messages(session_id: str) -> None:
+    normalized = str(session_id or "default").strip() or "default"
+    with get_chat_session_lock(normalized):
+        CHAT_SESSION_MESSAGES.pop(normalized, None)
+
+
 def get_chat_active_run_id(session_id: str) -> str:
     normalized = str(session_id or "default").strip() or "default"
     with CHAT_SESSION_RUNS_LOCK:
