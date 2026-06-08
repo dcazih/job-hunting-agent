@@ -78,6 +78,7 @@ CHAT_SESSION_LOCKS: dict[str, threading.RLock] = {}
 CHAT_SESSION_LOCKS_LOCK = threading.Lock()
 CHAT_SESSION_RUNS_LOCK = threading.Lock()
 CURRENT_RUN_ID: contextvars.ContextVar[str] = contextvars.ContextVar("current_run_id", default="")
+CURRENT_RESUME_DISPLAY_NAME: contextvars.ContextVar[str] = contextvars.ContextVar("current_resume_display_name", default="")
 CURRENT_TIME_ZONE: contextvars.ContextVar[str] = contextvars.ContextVar(
     "current_time_zone",
     default=os.getenv("APP_DEFAULT_TIMEZONE", "UTC").strip() or "UTC",
@@ -241,6 +242,18 @@ def set_current_run_id(run_id: str) -> None:
 
 def clear_current_run_id() -> None:
     CURRENT_RUN_ID.set("")
+
+
+def get_current_resume_display_name() -> str:
+    return str(CURRENT_RESUME_DISPLAY_NAME.get() or "").strip()
+
+
+def set_current_resume_display_name(display_name: str) -> None:
+    CURRENT_RESUME_DISPLAY_NAME.set(str(display_name or "").strip())
+
+
+def clear_current_resume_display_name() -> None:
+    CURRENT_RESUME_DISPLAY_NAME.set("")
 
 
 def get_current_time_zone() -> str:

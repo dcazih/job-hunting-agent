@@ -38,6 +38,7 @@ from backend.agent import (
     get_report_by_path,
     set_search_run_progress,
     get_current_time_zone,
+    get_current_resume_display_name,
 )
 
 
@@ -577,6 +578,28 @@ def run_search_pipeline(
     The agent should use this for every new search request.
     """
     _tool_log("run_search_pipeline")
+    active_resume_display_name = get_current_resume_display_name()
+    if not active_resume_display_name:
+        run_id = _current_chat_run_id()
+        message = "Select a resume in the UI before searching."
+        if run_id:
+            set_search_run_progress(
+                run_id,
+                status="failed",
+                progress=100,
+                step="Missing resume",
+                error=message,
+                result={
+                    "phase": "failed",
+                    "status": "missing_resume",
+                    "message": message,
+                },
+            )
+        return {
+            "status": "missing_resume",
+            "message": message,
+            "error": message,
+        }
     return _run_search_pipeline_core(
         target_industry=target_industry,
         location=location,

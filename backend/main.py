@@ -14,6 +14,7 @@ from backend.agent import (
     create_search_run,
     clear_chat_active_run_id,
     clear_current_run_id,
+    clear_current_resume_display_name,
     get_chat_active_run_id,
     get_chat_messages,
     get_search_run,
@@ -36,6 +37,7 @@ from backend.agent import (
     set_current_time_zone,
     clear_current_time_zone,
     set_current_run_id,
+    set_current_resume_display_name,
     get_chat_session_lock,
     run_daily_schedule_cron,
     start_scheduler,
@@ -239,6 +241,7 @@ def chat(payload: ChatRequest) -> dict:
     run_id = create_search_run()
     set_chat_active_run_id(session_id, run_id)
     set_current_run_id(run_id)
+    set_current_resume_display_name(payload.resume_display_name)
     set_current_time_zone(payload.timezone)
     assistant_content = ""
     messages: list = []
@@ -274,6 +277,7 @@ def chat(payload: ChatRequest) -> dict:
     finally:
         clear_chat_active_run_id(session_id)
         clear_current_run_id()
+        clear_current_resume_display_name()
         clear_current_time_zone()
 
     response: dict = {"assistant_message": assistant_content}

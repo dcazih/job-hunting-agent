@@ -820,6 +820,14 @@ export default function App() {
         return;
       }
 
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest("input, textarea, select, [contenteditable='true']")
+      ) {
+        return;
+      }
+
       const currentY = event.touches[0]?.clientY || 0;
       const deltaY = currentY - touchStartY;
       const atTop = scrollContainer.scrollTop <= 0;
@@ -832,12 +840,12 @@ export default function App() {
       }
     }
 
-    scrollContainer.addEventListener("touchstart", handleTouchStart, { passive: true });
-    scrollContainer.addEventListener("touchmove", handleTouchMove, { passive: false });
+    document.addEventListener("touchstart", handleTouchStart, { passive: true });
+    document.addEventListener("touchmove", handleTouchMove, { passive: false });
 
     return () => {
-      scrollContainer.removeEventListener("touchstart", handleTouchStart);
-      scrollContainer.removeEventListener("touchmove", handleTouchMove);
+      document.removeEventListener("touchstart", handleTouchStart);
+      document.removeEventListener("touchmove", handleTouchMove);
     };
   }, [isMobileLayout]);
 
@@ -1349,6 +1357,11 @@ export default function App() {
   async function handleSearch() {
     const trimmed = query.trim();
     if (!trimmed || busy) return;
+    if (!activeResumeName) {
+      setResumePickerOpen(true);
+      appendText("Select a resume before searching.");
+      return;
+    }
 
     if (introMode) {
       setIntroFadingOut(true);
@@ -2064,6 +2077,7 @@ export default function App() {
 
   const trimmedEmail = emailTo.trim();
   const canSubmitQuery = query.trim().length > 0;
+  const hasActiveResume = Boolean(activeResumeName);
   const isEmailValid = EMAIL_REGEX.test(trimmedEmail);
   const showEmailError = showEmailValidation && !isEmailValid;
   const scheduleLocked = !scheduleForm.enabled;
@@ -2384,7 +2398,7 @@ export default function App() {
                     className="search-stop-button has-tooltip"
                     data-tooltip={busy ? "Stop prompt" : "Send prompt"}
                     aria-label={busy ? "Stop search" : "Run search"}
-                    disabled={!busy && !canSubmitQuery}
+                    disabled={!busy && (!canSubmitQuery || !hasActiveResume)}
                   >
                     <FontAwesomeIcon icon={busy ? faStop : faArrowUp} />
                   </button>
@@ -2541,7 +2555,7 @@ export default function App() {
                 className="search-stop-button has-tooltip"
                 data-tooltip={busy ? "Stop prompt" : "Send prompt"}
                 aria-label={busy ? "Stop search" : "Run search"}
-                disabled={!busy && !canSubmitQuery}
+                disabled={!busy && (!canSubmitQuery || !hasActiveResume)}
               >
                 <FontAwesomeIcon icon={busy ? faStop : faArrowUp} />
               </button>

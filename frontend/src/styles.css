@@ -51,7 +51,6 @@ html,
 body,
 #root {
   height: 100%;
-  overscroll-behavior-y: none;
 }
 
 body {
@@ -81,7 +80,6 @@ svg,
 
 .app-shell.mobile-layout {
   --sidebar-w: 0px;
-  overscroll-behavior-y: none;
 }
 
 .app-shell.sidebar-collapsed {
@@ -2502,8 +2500,6 @@ label[for="profile-preferences"] {
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
-    overscroll-behavior-y: contain;
-    touch-action: pan-y;
   }
 
   .app-shell.mobile-layout .chat-column {
