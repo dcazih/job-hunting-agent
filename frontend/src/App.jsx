@@ -120,6 +120,14 @@ function getBrowserTimeZone() {
   }
 }
 
+function setViewportHeightVariable() {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return;
+  }
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  document.documentElement.style.setProperty("--vh", `${viewportHeight * 0.01}px`);
+}
+
 const WEEKDAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const WEEKDAY_LABEL_TO_INDEX = {
   Sun: 0,
@@ -763,6 +771,32 @@ export default function App() {
         appendText(error.message);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    let frameId = 0;
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(setViewportHeightVariable);
+    };
+
+    setViewportHeightVariable();
+    window.addEventListener("resize", scheduleUpdate);
+    window.addEventListener("orientationchange", scheduleUpdate);
+    window.visualViewport?.addEventListener("resize", scheduleUpdate);
+    window.visualViewport?.addEventListener("scroll", scheduleUpdate);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("orientationchange", scheduleUpdate);
+      window.visualViewport?.removeEventListener("resize", scheduleUpdate);
+      window.visualViewport?.removeEventListener("scroll", scheduleUpdate);
+    };
   }, []);
 
   useEffect(() => {

@@ -2338,7 +2338,7 @@ label[for="profile-preferences"] {
     display: flex;
     flex-direction: column;
     width: 100%;
-    height: 100dvh;
+    height: calc(var(--vh, 1vh) * 100);
     overflow: hidden;
   }
 
@@ -2396,7 +2396,7 @@ label[for="profile-preferences"] {
     top: 0;
     left: 0;
     width: min(84vw, 320px);
-    height: 100dvh;
+    height: calc(var(--vh, 1vh) * 100);
     z-index: 4300;
     transform: translateX(-102%);
     transition: transform 220ms ease;
@@ -2494,15 +2494,16 @@ label[for="profile-preferences"] {
   .app-shell.mobile-layout .chat-layout {
     flex: 1;
     min-height: 0;
-    height: auto;
+    height: calc(var(--vh, 1vh) * 100);
     padding-top: 70px;
+    max-width: 100vw;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
   }
 
   .app-shell.mobile-layout .chat-column {
-    min-height: 0;
+    min-height: calc((var(--vh, 1vh) * 100) - 70px - 1rem);
     height: auto;
   }
 
@@ -2514,7 +2515,7 @@ label[for="profile-preferences"] {
   .schedule-modal-card {
     width: min(650px, calc(100vw - 1rem));
     min-height: auto;
-    max-height: calc(100dvh - 1rem);
+    max-height: calc((var(--vh, 1vh) * 100) - 1rem);
     overflow-y: auto;
   }
 
