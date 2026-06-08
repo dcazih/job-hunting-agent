@@ -18,7 +18,8 @@ DEFAULT_MEMORY = {
     "job_preferences": [],
     "company_feedback": [],
     "role_feedback": [],
-    "job_feedback": []
+    "job_feedback": [],
+    "search_history": []
 }
 
 
@@ -131,6 +132,48 @@ def add_job_feedback(job_id, title, company, feedback, source="user"):
     return item
 
 
+def add_search_history(
+    *,
+    run_id,
+    target_industry,
+    location,
+    pages,
+    status,
+    scraped_count=0,
+    fresh_count=0,
+    scored_count=0,
+    report_path="",
+    report_name="",
+    assistant_message="",
+    cancelled=False,
+    source="agent",
+):
+    memory = load_memory()
+
+    item = {
+        "id": make_id("search"),
+        "run_id": run_id,
+        "target_industry": target_industry,
+        "location": location,
+        "pages": int(pages),
+        "status": status,
+        "scraped_count": int(scraped_count),
+        "fresh_count": int(fresh_count),
+        "scored_count": int(scored_count),
+        "report_path": report_path,
+        "report_name": report_name,
+        "assistant_message": assistant_message,
+        "cancelled": bool(cancelled),
+        "created_at": now_iso(),
+        "source": source,
+    }
+
+    memory["search_history"].append(item)
+    save_memory(memory)
+
+    return item
+
+
 def delete_memory_item(memory_id):
     memory = load_memory()
 
@@ -178,5 +221,22 @@ def memory_as_text():
             f"- [{item['id']}] {item['title']} at {item['company']} "
             f"({item['job_id']}): {item['feedback']}"
         )
+
+    sections.append("\nSearch history:")
+    for item in memory["search_history"]:
+        cancelled_text = "yes" if item.get("cancelled") else "no"
+        report_name = item.get("report_name") or item.get("report_path") or ""
+        assistant_message = item.get("assistant_message") or ""
+        summary = (
+            f"- [{item['id']}] {item.get('target_industry', '')} in {item.get('location', '')} "
+            f"pages={item.get('pages', 1)} status={item.get('status', '')} "
+            f"scraped={item.get('scraped_count', 0)} fresh={item.get('fresh_count', 0)} "
+            f"scored={item.get('scored_count', 0)} cancelled={cancelled_text}"
+        )
+        if report_name:
+            summary += f" report={report_name}"
+        if assistant_message:
+            summary += f" note={assistant_message}"
+        sections.append(summary)
 
     return "\n".join(sections)

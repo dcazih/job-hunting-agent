@@ -24,6 +24,7 @@ from job_tools.storage import (
 )
 from job_tools.emailer import send_email
 from job_tools.memory_store import memory_as_text
+from job_tools.memory_store import add_search_history
 from backend.agent import (
     CHAT_AGENT_RUN_ID,
     clear_search_run_cancel,
@@ -600,13 +601,43 @@ def run_search_pipeline(
             "message": message,
             "error": message,
         }
-    return _run_search_pipeline_core(
-        target_industry=target_industry,
-        location=location,
-        pages=pages,
-        should_email=should_email,
-        to_email=to_email,
-    )
+    run_id = _current_chat_run_id()
+    status = "failed"
+    result: dict = {}
+    cancelled = False
+    try:
+        result = _run_search_pipeline_core(
+            target_industry=target_industry,
+            location=location,
+            pages=pages,
+            should_email=should_email,
+            to_email=to_email,
+        )
+        status = str(result.get("status", "complete") or "complete")
+        return result
+    except RuntimeError as error:
+        cancelled = "Search was canceled by user." in str(error)
+        status = "canceled" if cancelled else "failed"
+        raise
+    finally:
+        if run_id:
+            try:
+                add_search_history(
+                    run_id=run_id,
+                    target_industry=target_industry,
+                    location=location,
+                    pages=pages,
+                    status=status,
+                    scraped_count=int(result.get("scraped_count", 0) or 0),
+                    fresh_count=int(result.get("fresh_count", 0) or 0),
+                    scored_count=int(result.get("scored_count", 0) or 0),
+                    report_path=str(result.get("report_path", "") or ""),
+                    report_name=str(result.get("report_name", "") or ""),
+                    assistant_message=str(result.get("assistant_message", "") or ""),
+                    cancelled=cancelled,
+                )
+            except Exception:
+                pass
 
 
 @tool

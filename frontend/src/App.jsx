@@ -671,6 +671,7 @@ export default function App() {
   const [introMode, setIntroMode] = useState(true);
   const [introFadingOut, setIntroFadingOut] = useState(false);
   const [returningToIntro, setReturningToIntro] = useState(false);
+  const [startupReveal, setStartupReveal] = useState(false);
   const [introSuggestion, setIntroSuggestion] = useState(() => getRandomIntroSuggestion());
   const [introSuggestionFadingOut, setIntroSuggestionFadingOut] = useState(false);
   const [hasResume, setHasResume] = useState(false);
@@ -728,7 +729,24 @@ export default function App() {
   const searchSummaryHoldUntilRef = useRef(0);
   const searchRunIdRef = useRef("");
   const bottomTextareaHeightRef = useRef(0);
+  const touchPressedButtonRef = useRef(null);
   const searchStatusKey = `${searchDisplay.headline}||${searchDisplay.shimmer ? "1" : "0"}`;
+
+  function clearTouchPressedButton() {
+    touchPressedButtonRef.current?.classList.remove("touch-pressed");
+    touchPressedButtonRef.current = null;
+  }
+
+  function handleMobileButtonPointerDown(event) {
+    if (!isMobileLayout || event.pointerType === "mouse") return;
+    const button = event.target.closest?.(
+      ".mobile-menu-button, .sidebar button, .resume-picker button, .composer-shell button",
+    );
+    if (!button || button.disabled) return;
+    clearTouchPressedButton();
+    button.classList.add("touch-pressed");
+    touchPressedButtonRef.current = button;
+  }
 
   function appendText(text, role = "assistant", focusBlock = null, extra = {}) {
     const newId = crypto.randomUUID();
@@ -1956,6 +1974,16 @@ export default function App() {
   }, [introMode]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setStartupReveal(true);
+    }, 90);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!introMode || query.trim()) {
       if (introSuggestionRotateTimerRef.current) {
         clearTimeout(introSuggestionRotateTimerRef.current);
@@ -2037,6 +2065,27 @@ export default function App() {
     };
   }, [introMode, isMobileLayout, mobileSidebarOpen, mobileSidebarClosing]);
 
+  useEffect(() => {
+    if (!isMobileLayout) {
+      clearTouchPressedButton();
+      return undefined;
+    }
+
+    const clearPressedButton = () => clearTouchPressedButton();
+    window.addEventListener("pointerup", clearPressedButton);
+    window.addEventListener("pointercancel", clearPressedButton);
+    window.addEventListener("blur", clearPressedButton);
+    document.addEventListener("visibilitychange", clearPressedButton);
+
+    return () => {
+      clearTouchPressedButton();
+      window.removeEventListener("pointerup", clearPressedButton);
+      window.removeEventListener("pointercancel", clearPressedButton);
+      window.removeEventListener("blur", clearPressedButton);
+      document.removeEventListener("visibilitychange", clearPressedButton);
+    };
+  }, [isMobileLayout]);
+
   const trimmedEmail = emailTo.trim();
   const canSubmitQuery = query.trim().length > 0;
   const isEmailValid = EMAIL_REGEX.test(trimmedEmail);
@@ -2045,7 +2094,12 @@ export default function App() {
 
   return (
     <>
-    <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : "sidebar-open"} ${isMobileLayout ? "mobile-layout" : ""} ${isMobileLayout ? "tooltips-disabled" : sidebarAnimating ? "tooltips-disabled" : ""}`}>
+    <main
+      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : "sidebar-open"} ${isMobileLayout ? "mobile-layout" : ""} ${isMobileLayout ? "tooltips-disabled" : sidebarAnimating ? "tooltips-disabled" : ""}`}
+      onPointerDown={handleMobileButtonPointerDown}
+      onPointerUp={clearTouchPressedButton}
+      onPointerCancel={clearTouchPressedButton}
+    >
       <input
         ref={fileInputRef}
         type="file"
@@ -2063,7 +2117,7 @@ export default function App() {
           >
             <HiMenuAlt1 />
           </button>
-          <h1 className="mobile-header-title">Job-Hunting Agent</h1>
+          <h1 className={`mobile-header-title ${startupReveal ? "app-title-fade-in" : "app-title-startup"}`}>Job-Hunting Agent</h1>
         </header>
       )}
 
@@ -2073,9 +2127,9 @@ export default function App() {
 
       <aside className={`sidebar ${!isMobileLayout && sidebarCollapsed ? "collapsed" : ""} ${isMobileLayout ? "mobile" : ""} ${isMobileLayout && mobileSidebarOpen ? "mobile-open" : ""} ${isMobileLayout && mobileSidebarClosing ? "mobile-closing" : ""}`}>
         <div className="sidebar-top">
-          <div className="brand-box" aria-hidden={sidebarCollapsed || isMobileLayout}>
-            <h2>Job-Hunting Agent</h2>
-          </div>
+            <div className="brand-box" aria-hidden={sidebarCollapsed || isMobileLayout}>
+              <h2 className={`${startupReveal ? "app-title-fade-in" : "app-title-startup"}`}>Job-Hunting Agent</h2>
+            </div>
 
           {isMobileLayout ? (
             <div className="sidebar-mobile-header">
@@ -2290,11 +2344,11 @@ export default function App() {
           document.body,
         )}
         {introMode && (
-          <div className={`intro-shell ${introFadingOut ? "fade-out" : ""} ${returningToIntro ? "entering" : ""}`}>
-            <h1>Drop a resume. Start the hunt.</h1>
-            <p>Describe your target industry and I will search, score, and report top matches.</p>
+          <div className={`intro-shell ${introFadingOut ? "fade-out" : ""} ${returningToIntro ? "entering" : ""} ${startupReveal ? "" : "startup-enter"}`}>
+            <h1 className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Drop a resume. Start the hunt.</h1>
+            <p className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Describe your target industry and I will search, score, and report top matches.</p>
 
-            <form className="intro-composer" onSubmit={handleSubmit}>
+            <form className={`intro-composer ${startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}`} onSubmit={handleSubmit}>
               <div className={`composer-shell single-line ${resumePickerOpen ? "with-resume-strip" : ""}`}>
                 <ResumePicker
                   uploads={resumeUploads}

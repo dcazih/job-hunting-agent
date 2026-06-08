@@ -511,6 +511,12 @@ svg,
   transition: opacity 260ms ease, transform 260ms ease;
 }
 
+.intro-shell.startup-enter {
+  opacity: 0;
+  transform: translate(-50%, 36px);
+  animation: intro-startup-fade-up 240ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
 .intro-shell.fade-out {
   opacity: 0;
   transform: translate(-50%, -12px);
@@ -533,10 +539,42 @@ svg,
   }
 }
 
+@keyframes intro-startup-fade-up {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 36px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 .intro-shell h1 {
   margin: 0 0 0.45rem;
   font-family: "MontserratCustom", "GeistCustom", sans-serif;
   font-size: clamp(1.45rem, 3.3vw, 2.25rem);
+}
+
+.intro-hero-startup {
+  opacity: 0;
+}
+
+.intro-hero-fade-in {
+  opacity: 0;
+  transform: translateY(18px);
+  animation: intro-hero-fade-in 380ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes intro-hero-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .intro-shell p {
@@ -569,7 +607,7 @@ svg,
   background: #2f6bff;
   color: #f2f7ff;
   padding: 0.62rem 0.82rem;
-  border-radius: 11px;
+  border-radius: 15px;
   line-height: 1.35;
   margin: 0.35rem 0;
 
@@ -1243,6 +1281,7 @@ svg,
   cursor: default;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
   overflow: hidden;
+  transition: transform 120ms ease, border-color 120ms ease, background-color 120ms ease;
 }
 
 .resume-chip::before {
@@ -1256,6 +1295,10 @@ svg,
 .resume-chip.active {
   border-color: #7ca3ff;
   background: #2a3352;
+}
+
+.resume-chip:active:not(:disabled) {
+  transform: scale(1.08);
 }
 
 .resume-chip.pulse {
@@ -2624,4 +2667,49 @@ label[for="profile-preferences"] {
 
   .job-card { flex-basis: 280px; }
   .chat-column { max-width: 100%; }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .app-shell.mobile-layout .mobile-menu-button,
+  .app-shell.mobile-layout .sidebar button,
+  .app-shell.mobile-layout .resume-picker button,
+  .app-shell.mobile-layout .composer-shell button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .app-shell.mobile-layout .mobile-menu-button.touch-pressed:not(:disabled),
+  .app-shell.mobile-layout .sidebar button.touch-pressed:not(:disabled),
+  .app-shell.mobile-layout .resume-picker button.touch-pressed:not(:disabled),
+  .app-shell.mobile-layout .composer-shell button.touch-pressed:not(:disabled) {
+    box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0.14) !important;
+  }
+
+  .app-shell.mobile-layout .mobile-menu-button:not(:disabled):hover:not(.touch-pressed),
+  .app-shell.mobile-layout .mobile-menu-button:not(:disabled):focus:not(.touch-pressed),
+  .app-shell.mobile-layout .sidebar button:not(:disabled):hover:not(.touch-pressed),
+  .app-shell.mobile-layout .sidebar button:not(:disabled):focus:not(.touch-pressed),
+  .app-shell.mobile-layout .resume-picker button:not(:disabled):hover:not(.touch-pressed),
+  .app-shell.mobile-layout .resume-picker button:not(:disabled):focus:not(.touch-pressed),
+  .app-shell.mobile-layout .composer-shell button:not(:disabled):hover:not(.touch-pressed),
+  .app-shell.mobile-layout .composer-shell button:not(:disabled):focus:not(.touch-pressed) {
+    box-shadow: none !important;
+    opacity: 1 !important;
+    outline: none;
+  }
+
+  .app-shell.mobile-layout .mobile-menu-button:hover:not(.touch-pressed),
+  .app-shell.mobile-layout .sidebar .profile-button:hover:not(.touch-pressed),
+  .app-shell.mobile-layout .sidebar .sidebar-toggle:hover:not(.touch-pressed),
+  .app-shell.mobile-layout .sidebar .sidebar-mobile-target-button:hover:not(.touch-pressed),
+  .app-shell.mobile-layout .sidebar .sidebar-mobile-close:hover:not(.touch-pressed),
+  .app-shell.mobile-layout .sidebar .report-menu-trigger:hover:not(.touch-pressed),
+  .app-shell.mobile-layout .sidebar .report-menu button:hover:not(.touch-pressed),
+  .app-shell.mobile-layout .resume-picker .resume-plus:hover:not(.touch-pressed),
+  .app-shell.mobile-layout .composer-shell .upload-inline-button:hover:not(.touch-pressed) {
+    background-color: transparent !important;
+  }
+
+  .app-shell.mobile-layout .sidebar .report-item:not(.active):hover:not(.touch-pressed) {
+    background-color: #1b1b1b !important;
+  }
 }
