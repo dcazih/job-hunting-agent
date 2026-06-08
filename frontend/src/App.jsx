@@ -1307,11 +1307,6 @@ export default function App() {
   async function handleSearch() {
     const trimmed = query.trim();
     if (!trimmed || busy) return;
-    if (!activeResumeName) {
-      setResumePickerOpen(true);
-      appendText("Select a resume before searching.");
-      return;
-    }
 
     if (introMode) {
       setIntroFadingOut(true);
@@ -2027,7 +2022,6 @@ export default function App() {
 
   const trimmedEmail = emailTo.trim();
   const canSubmitQuery = query.trim().length > 0;
-  const hasActiveResume = Boolean(activeResumeName);
   const isEmailValid = EMAIL_REGEX.test(trimmedEmail);
   const showEmailError = showEmailValidation && !isEmailValid;
   const scheduleLocked = !scheduleForm.enabled;
@@ -2348,7 +2342,7 @@ export default function App() {
                     className="search-stop-button has-tooltip"
                     data-tooltip={busy ? "Stop prompt" : "Send prompt"}
                     aria-label={busy ? "Stop search" : "Run search"}
-                    disabled={!busy && (!canSubmitQuery || !hasActiveResume)}
+                    disabled={!busy && !canSubmitQuery}
                   >
                     <FontAwesomeIcon icon={busy ? faStop : faArrowUp} />
                   </button>
@@ -2505,7 +2499,7 @@ export default function App() {
                 className="search-stop-button has-tooltip"
                 data-tooltip={busy ? "Stop prompt" : "Send prompt"}
                 aria-label={busy ? "Stop search" : "Run search"}
-                disabled={!busy && (!canSubmitQuery || !hasActiveResume)}
+                disabled={!busy && !canSubmitQuery}
               >
                 <FontAwesomeIcon icon={busy ? faStop : faArrowUp} />
               </button>
