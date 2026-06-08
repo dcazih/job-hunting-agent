@@ -19,6 +19,7 @@ class ChatRequest(BaseModel):
     run_id: str = ""
     resume_name: str = ""
     resume_display_name: str = ""
+    timezone: str = "UTC"
 
 
 class EmailLatestRequest(BaseModel):
@@ -28,6 +29,7 @@ class EmailLatestRequest(BaseModel):
 class ScheduleRequest(BaseModel):
     enabled: bool = False
     time: str = "09:00"
+    timezone: str = "UTC"
     days: dict[str, bool] = Field(
         default_factory=lambda: {
             "mon": True,

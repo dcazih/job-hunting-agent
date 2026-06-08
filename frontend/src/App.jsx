@@ -8,7 +8,6 @@ import {
   faArrowUp,
   faChevronUp,
   faCrosshairs,
-  faCircleUser,
   faChevronDown,
   faEllipsis,
   faEnvelope,
@@ -16,6 +15,7 @@ import {
   faFileArrowUp,
   faCheck,
   faCalendarDays,
+  faCircleQuestion,
   faMagnifyingGlass,
   faPaperPlane,
   faPenToSquare,
@@ -40,6 +40,7 @@ const SCHEDULE_DAYS = [
 const DEFAULT_SCHEDULE = {
   enabled: false,
   time: "09:00",
+  timezone: getBrowserTimeZone(),
   days: {
     mon: true,
     tue: true,
@@ -102,6 +103,162 @@ function getSessionId() {
   }
 }
 
+function getBrowserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+const WEEKDAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const WEEKDAY_LABEL_TO_INDEX = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+function parseTimeString(timeString) {
+  const [hourText, minuteText] = String(timeString || "00:00").split(":");
+  return {
+    hour: Number(hourText) || 0,
+    minute: Number(minuteText) || 0,
+  };
+}
+
+function formatTimeString(hour, minute) {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function getZoneDateParts(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    hourCycle: "h23",
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(date);
+
+  const mapped = {};
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      mapped[part.type] = part.value;
+    }
+  }
+
+  return {
+    year: Number(mapped.year),
+    month: Number(mapped.month),
+    day: Number(mapped.day),
+    hour: Number(mapped.hour),
+    minute: Number(mapped.minute),
+    weekdayIndex: WEEKDAY_LABEL_TO_INDEX[mapped.weekday] ?? 0,
+  };
+}
+
+function getTimeZoneOffset(date, timeZone) {
+  const parts = getZoneDateParts(date, timeZone);
+  const asUTC = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0);
+  return asUTC - date.getTime();
+}
+
+function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+  const firstOffset = getTimeZoneOffset(utcGuess, timeZone);
+  let adjusted = new Date(utcGuess.getTime() - firstOffset);
+  const secondOffset = getTimeZoneOffset(adjusted, timeZone);
+  if (secondOffset !== firstOffset) {
+    adjusted = new Date(utcGuess.getTime() - secondOffset);
+  }
+  return adjusted;
+}
+
+function convertScheduleForViewer(payload, sourceTimeZone, targetTimeZone) {
+  const safeSourceZone = sourceTimeZone || targetTimeZone || getBrowserTimeZone();
+  const safeTargetZone = targetTimeZone || getBrowserTimeZone();
+  const sourceTime = parseTimeString(payload?.time || DEFAULT_SCHEDULE.time);
+  const sourceDays = payload?.days || {};
+
+  if (safeSourceZone === safeTargetZone) {
+    return {
+      enabled: Boolean(payload?.enabled),
+      time: formatTimeString(sourceTime.hour, sourceTime.minute),
+      timezone: safeTargetZone,
+      days: {
+        mon: Boolean(sourceDays.mon),
+        tue: Boolean(sourceDays.tue),
+        wed: Boolean(sourceDays.wed),
+        thu: Boolean(sourceDays.thu),
+        fri: Boolean(sourceDays.fri),
+        sat: Boolean(sourceDays.sat),
+        sun: Boolean(sourceDays.sun),
+      },
+      keywords: String(payload?.keywords || DEFAULT_SCHEDULE.keywords),
+      location: String(payload?.location || DEFAULT_SCHEDULE.location),
+      pages: Number(payload?.pages || DEFAULT_SCHEDULE.pages),
+      email_to: String(payload?.email_to || DEFAULT_SCHEDULE.email_to),
+    };
+  }
+
+  const sourceNow = getZoneDateParts(new Date(), safeSourceZone);
+  const currentSourceCalendar = new Date(Date.UTC(sourceNow.year, sourceNow.month - 1, sourceNow.day));
+  const weekStart = new Date(currentSourceCalendar);
+  weekStart.setUTCDate(currentSourceCalendar.getUTCDate() - currentSourceCalendar.getUTCDay());
+
+  const convertedDays = {
+    mon: false,
+    tue: false,
+    wed: false,
+    thu: false,
+    fri: false,
+    sat: false,
+    sun: false,
+  };
+
+  let convertedTime = formatTimeString(sourceTime.hour, sourceTime.minute);
+  let convertedTimeSet = false;
+
+  WEEKDAY_KEYS.forEach((dayKey, dayIndex) => {
+    if (!sourceDays[dayKey]) return;
+    const selectedCalendar = new Date(weekStart);
+    selectedCalendar.setUTCDate(weekStart.getUTCDate() + dayIndex);
+    const utcInstant = zonedTimeToUtc(
+      selectedCalendar.getUTCFullYear(),
+      selectedCalendar.getUTCMonth() + 1,
+      selectedCalendar.getUTCDate(),
+      sourceTime.hour,
+      sourceTime.minute,
+      safeSourceZone,
+    );
+    const targetParts = getZoneDateParts(utcInstant, safeTargetZone);
+    const targetDayKey = WEEKDAY_KEYS[targetParts.weekdayIndex];
+    convertedDays[targetDayKey] = true;
+    if (!convertedTimeSet) {
+      convertedTime = formatTimeString(targetParts.hour, targetParts.minute);
+      convertedTimeSet = true;
+    }
+  });
+
+  return {
+    enabled: Boolean(payload?.enabled),
+    time: convertedTime,
+    timezone: safeTargetZone,
+    days: convertedDays,
+    keywords: String(payload?.keywords || DEFAULT_SCHEDULE.keywords),
+    location: String(payload?.location || DEFAULT_SCHEDULE.location),
+    pages: Number(payload?.pages || DEFAULT_SCHEDULE.pages),
+    email_to: String(payload?.email_to || DEFAULT_SCHEDULE.email_to),
+  };
+}
+
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -157,21 +314,122 @@ function SafeLottie({ animationData, className }) {
   return <div ref={mountRef} className={className} aria-hidden="true" />;
 }
 
-function JobCard({ job }) {
-  const score = Number(job.score || 0);
+function JobCard({ job, isMobileLayout }) {
+  const score = Math.max(0, Math.min(100, Number(job.score || 0) || 0));
+  const [scoreHovered, setScoreHovered] = useState(false);
+  const [scoreExpanded, setScoreExpanded] = useState(isMobileLayout);
+  const scoreHoverTimerRef = useRef(null);
+  const recommendationMap = {
+    apply_today: "Apply",
+    review: "Review",
+    maybe: "Maybe",
+    ignore: "Ignore",
+  };
+  const recommendation = recommendationMap[job.recommendation] || job.recommendation || "";
+  const isTopScore = score === 100;
+  const isExpandedScore = scoreHovered || scoreExpanded;
+  const recommendationTone = ({
+    apply_today: "apply",
+    review: "review",
+    maybe: "maybe",
+    ignore: "ignore",
+  })[String(job.recommendation || "").toLowerCase()] || "";
+  const scheduleScoreHover = () => {
+    if (scoreHoverTimerRef.current) {
+      clearTimeout(scoreHoverTimerRef.current);
+    }
+    scoreHoverTimerRef.current = setTimeout(() => {
+      setScoreHovered(true);
+      scoreHoverTimerRef.current = null;
+    }, 100);
+  };
+  const cancelScoreHover = () => {
+    if (scoreHoverTimerRef.current) {
+      clearTimeout(scoreHoverTimerRef.current);
+      scoreHoverTimerRef.current = null;
+    }
+    setScoreHovered(false);
+  };
+
+  useEffect(() => {
+    if (isMobileLayout) {
+      if (scoreHoverTimerRef.current) {
+        clearTimeout(scoreHoverTimerRef.current);
+        scoreHoverTimerRef.current = null;
+      }
+      setScoreHovered(false);
+      setScoreExpanded(true);
+      return undefined;
+    }
+    setScoreExpanded(false);
+    setScoreHovered(false);
+    if (scoreHoverTimerRef.current) {
+      clearTimeout(scoreHoverTimerRef.current);
+      scoreHoverTimerRef.current = null;
+    }
+    return undefined;
+  }, [isMobileLayout]);
+
+  useEffect(
+    () => () => {
+      if (scoreHoverTimerRef.current) {
+        clearTimeout(scoreHoverTimerRef.current);
+      }
+    },
+    [],
+  );
 
   return (
     <article className="job-card">
       <div className="job-card-header">
-        <h4>{job.title || "Untitled role"}</h4>
-        <div className="job-score-pill" aria-label={`Score ${score} out of 100`}>
-          <span className="job-score-value">{score}</span>
-          <span className="job-score-total">/100</span>
+        <div className="job-card-title-group">
+          <h4>{job.title || "Untitled role"}</h4>
+          <div className="job-card-meta-inline">
+            <p className="job-meta">{job.company || "Unknown company"}</p>
+            <span className="job-card-meta-separator" aria-hidden="true">•</span>
+            <p className="job-meta">{job.location || "Unknown location"}</p>
+          </div>
         </div>
-      </div>
-      <div className="job-card-submeta">
-        <p className="job-meta">{job.company || "Unknown company"}</p>
-        <p className="job-meta">{job.location || "Unknown location"}</p>
+        <div
+          className={`job-score-pill ${isMobileLayout ? "mobile-toggle" : ""} ${isExpandedScore ? "hovered" : ""}`}
+          aria-label={`Score ${score} out of 100`}
+          role={isMobileLayout ? "button" : undefined}
+          tabIndex={isMobileLayout ? 0 : undefined}
+          style={{ "--score-percent": score }}
+          onMouseEnter={isMobileLayout ? undefined : scheduleScoreHover}
+          onMouseLeave={isMobileLayout ? undefined : cancelScoreHover}
+          onClick={
+            isMobileLayout
+              ? () => {
+                  setScoreExpanded((value) => !value);
+                }
+              : undefined
+          }
+          onKeyDown={
+            isMobileLayout
+              ? (event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setScoreExpanded((value) => !value);
+                  }
+                }
+              : undefined
+          }
+          >
+          <span className="job-score-inline">
+            <span className={`job-score-value ${isTopScore && isExpandedScore ? "is-hundred" : ""}`}>{score}</span>
+            <span className="job-score-total">/100</span>
+          </span>
+          <span className="job-score-hover-content" aria-hidden="true">
+            <span className="job-score-circle">
+              <span className={`job-score-centered ${recommendationTone ? `tone-${recommendationTone}` : ""} ${isTopScore && isExpandedScore ? "is-hundred" : ""}`}>{score}</span>
+              <svg className="job-score-ring" viewBox="0 0 36 36" focusable="false">
+                <circle className={`job-score-ring-progress ${isTopScore ? "is-hundred" : ""}`} cx="18" cy="18" r="14" />
+              </svg>
+            </span>
+            <span className="job-score-recommendation">{recommendation}</span>
+          </span>
+        </div>
       </div>
       <p className="job-fit">{job.fit_summary || "No summary provided."}</p>
       <a className="job-link" href={job.url} target="_blank" rel="noreferrer">Open listing</a>
@@ -179,24 +437,16 @@ function JobCard({ job }) {
   );
 }
 
-function ReportPanel({ report, onEmailLatest, emailBusy, onShowEmailTooltip, onHideTooltip }) {
+function ReportPanel({ report, onEmailLatest, emailBusy, onShowEmailTooltip, onHideTooltip, isMobileLayout, panelRef }) {
   if (!report) return <p className="assistant-text">No report selected.</p>;
   const [remainingOpen, setRemainingOpen] = useState(false);
 
   const topJobs = report.top_jobs || [];
   const remainingJobs = report.remaining_jobs || [];
   const title = report.report_title || report.report_name || report.report_path?.split("/").pop() || "Untitled";
-  const targetIndustry = (report.target_industry || "").trim();
-  const displayTargetIndustry = targetIndustry
-    ? targetIndustry
-        .split(/\s+/)
-        .filter(Boolean)
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(" ")
-    : "";
 
   return (
-    <section className="report-panel">
+    <section className="report-panel" ref={panelRef}>
       <div className="report-panel-header">
         <h3>
           <span className="report-label">Report:&nbsp;&nbsp;</span>
@@ -205,21 +455,20 @@ function ReportPanel({ report, onEmailLatest, emailBusy, onShowEmailTooltip, onH
         <button
           disabled={emailBusy}
           onClick={onEmailLatest}
-          onMouseEnter={onShowEmailTooltip}
-          onMouseLeave={onHideTooltip}
+          onMouseEnter={isMobileLayout ? undefined : onShowEmailTooltip}
+          onMouseLeave={isMobileLayout ? undefined : onHideTooltip}
           aria-label="Send report email"
           className=""
         >
           <FontAwesomeIcon icon={faEnvelope} />
         </button>
       </div>
-      {displayTargetIndustry && <p className="report-target-industry">Target industry: {displayTargetIndustry}</p>}
 
       <section className="report-section">
         <h4>Top Jobs</h4>
         <div className="jobs-row">
           {topJobs.length > 0 ? topJobs.map((job) => (
-            <JobCard key={job.job_id || job.url} job={job} />
+            <JobCard key={job.job_id || job.url} job={job} isMobileLayout={isMobileLayout} />
           )) : <p className="assistant-text">No top jobs in this report.</p>}
         </div>
       </section>
@@ -238,7 +487,7 @@ function ReportPanel({ report, onEmailLatest, emailBusy, onShowEmailTooltip, onH
         <div className={`remaining-content ${remainingOpen ? "open" : ""}`}>
           <div className="jobs-row">
             {remainingJobs.length > 0 ? remainingJobs.map((job) => (
-              <JobCard key={job.job_id || job.url} job={job} />
+              <JobCard key={job.job_id || job.url} job={job} isMobileLayout={isMobileLayout} />
             )) : <p className="assistant-text">No remaining jobs in this report.</p>}
           </div>
         </div>
@@ -255,6 +504,75 @@ function ResumePresentIcon({ className = "" }) {
         <FontAwesomeIcon icon={faCheck} />
       </span>
     </span>
+  );
+}
+
+function ResumePicker({
+  uploads,
+  open,
+  closing,
+  busy,
+  activeResumeName,
+  rowRef,
+  pulsingResumeName,
+  apiBase,
+  onAddClick,
+  onSelect,
+  onDelete,
+  onPlusMouseEnter,
+  onItemMouseEnter,
+  onItemMouseLeave,
+  onAddMouseLeave,
+}) {
+  return (
+    <div className={`resume-picker ${open ? "open" : ""}`}>
+      {uploads.length > 0 && (open || closing) && (
+        <button
+          type="button"
+          className="resume-plus"
+          onClick={onAddClick}
+          onMouseEnter={onPlusMouseEnter}
+          onMouseLeave={onAddMouseLeave}
+          disabled={busy}
+          aria-label="Upload another resume"
+        >
+          <FontAwesomeIcon icon={faPlus} />
+        </button>
+      )}
+      <div
+        className="resume-picker-row"
+        ref={rowRef}
+        style={{ "--resume-strip-item-count": Math.max(1, uploads.length + (uploads.length > 0 ? 1 : 0)) }}
+      >
+        {uploads.map((item, index) => {
+          const thumbSrc = item.thumbnail_url ? `${apiBase}${item.thumbnail_url}` : "";
+          const isActive = item.is_active || item.name === activeResumeName;
+          return (
+            <div key={item.name} className="resume-item" data-resume-name={item.name}>
+              <button
+                type="button"
+                className={`resume-chip ${isActive ? "active" : ""} ${pulsingResumeName === item.name ? "pulse" : ""}`}
+                aria-label={item.display_name}
+                onClick={() => onSelect(item.name)}
+                style={thumbSrc ? { backgroundImage: `url(${thumbSrc})` } : undefined}
+                onMouseEnter={(event) => onItemMouseEnter(event, item.display_name)}
+                onMouseLeave={onItemMouseLeave}
+              >
+                {index + 1}
+              </button>
+              <button
+                type="button"
+                className="resume-chip-delete"
+                aria-label={`Delete ${item.display_name}`}
+                onClick={() => onDelete(item.name)}
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -315,19 +633,15 @@ export default function App() {
   const [showEmailValidation, setShowEmailValidation] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleLoading, setScheduleLoading] = useState(false);
-  const [scheduleLoadingSlow, setScheduleLoadingSlow] = useState(false);
+  const [scheduleLoadingMessage, setScheduleLoadingMessage] = useState("Loading schedule...");
   const [scheduleSaving, setScheduleSaving] = useState(false);
-  const scheduleLoadingTimerRef = useRef(null);
+  const scheduleLoadingTimersRef = useRef([]);
   const [scheduleForm, setScheduleForm] = useState(DEFAULT_SCHEDULE);
   const [scheduleDailyEnabled, setScheduleDailyEnabled] = useState(false);
   const [showScheduleEmailValidation, setShowScheduleEmailValidation] = useState(false);
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileResumeListOpen, setProfileResumeListOpen] = useState(false);
-  const [profileTargetIndustry, setProfileTargetIndustry] = useState("");
-  const [profilePreferences, setProfilePreferences] = useState("");
   const [scheduleToastVisible, setScheduleToastVisible] = useState(false);
+  const [resumeToastVisible, setResumeToastVisible] = useState(false);
+  const [resumeToastNonce, setResumeToastNonce] = useState(0);
   const [openResumeMessageId, setOpenResumeMessageId] = useState("");
   const [resumeThumbTooltip, setResumeThumbTooltip] = useState({ visible: false, text: "", top: 0, left: 0 });
   const [introMode, setIntroMode] = useState(true);
@@ -342,6 +656,8 @@ export default function App() {
   const [dragActive, setDragActive] = useState(false);
   const [floatingTooltip, setFloatingTooltip] = useState({ visible: false, text: "", top: 0, left: 0, placement: "left" });
   const [pulsingResumeName, setPulsingResumeName] = useState("");
+  const activeResumeName = resumeUploads.find((item) => item.is_active)?.name || "";
+  const resumePickerRowRef = useRef(null);
 
   function openMobileSidebar() {
     if (mobileSidebarCloseTimerRef.current) {
@@ -366,6 +682,7 @@ export default function App() {
   }
 
   const messageRefs = useRef({});
+  const reportPanelRefs = useRef({});
   const chatContentRef = useRef(null);
   const fileInputRef = useRef(null);
   const introTextareaRef = useRef(null);
@@ -377,6 +694,7 @@ export default function App() {
   const resumePlusCloseTimerRef = useRef(null);
   const resumePulseTimerRef = useRef(null);
   const scheduleToastTimerRef = useRef(null);
+  const resumeToastTimerRef = useRef(null);
   const chatAbortRef = useRef(null);
   const dragDepthRef = useRef(0);
   const dragClearTimerRef = useRef(null);
@@ -440,11 +758,24 @@ export default function App() {
 
   useEffect(() => {
     if (!focusRequest?.id) return;
-    const target = messageRefs.current[focusRequest.id];
+    const focusedMessage = messages.find((message) => message.id === focusRequest.id);
+    const target = focusedMessage?.type === "report"
+      ? reportPanelRefs.current[focusRequest.id]
+      : messageRefs.current[focusRequest.id];
     if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: focusRequest.block || "end" });
+      if (isMobileLayout && focusedMessage?.type === "report") {
+        const container = chatContentRef.current?.parentElement;
+        if (container) {
+          const containerRect = container.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - 16;
+          container.scrollTo({ top: Math.max(0, nextTop), behavior: "auto" });
+        }
+      } else {
+        target.scrollIntoView({ behavior: "smooth", block: focusRequest.block || "end" });
+      }
     }
-  }, [focusRequest, messages]);
+  }, [focusRequest, messages, isMobileLayout]);
 
   useEffect(() => {
     function updateLastChatExtraPadding() {
@@ -496,6 +827,12 @@ export default function App() {
       const scoringTotal = Number(result.scoring_total || 0) || 0;
       const currentTitle = String(result.current_job_title || "").trim();
       const currentCompany = String(result.current_job_company || "").trim();
+      const hasReportData = Boolean(
+        result.report_path
+        || result.report
+        || (Array.isArray(result.top_jobs) && result.top_jobs.length > 0)
+        || (Array.isArray(result.remaining_jobs) && result.remaining_jobs.length > 0)
+      );
 
       if (runId && searchRunIdRef.current !== runId) {
         searchRunIdRef.current = runId;
@@ -535,15 +872,7 @@ export default function App() {
         };
       }
 
-      if (step.includes("build") || phase === "building") {
-        return {
-          headline: "Building Report",
-          subline: "",
-          shimmer: true,
-        };
-      }
-
-      if (run?.status === "complete") {
+      if ((step.includes("build") || phase === "building" || run?.status === "complete") && hasReportData) {
         return {
           headline: "Building Report",
           subline: "",
@@ -620,7 +949,7 @@ export default function App() {
       );
       if (clickedTextarea) return;
       const insideResumeUi = target instanceof Element && Boolean(
-        target.closest(".resume-picker-strip") ||
+        target.closest(".resume-picker") ||
         target.closest(".resume-toggle-button") ||
         target.closest(".resume-icon-stack")
       );
@@ -634,6 +963,23 @@ export default function App() {
     document.addEventListener("mousedown", handleResumePickerOutsideClick);
     return () => document.removeEventListener("mousedown", handleResumePickerOutsideClick);
   }, [resumePickerOpen]);
+
+  useEffect(() => {
+    if (!resumePickerOpen || !activeResumeName) return;
+    const row = resumePickerRowRef.current;
+    if (!row) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const activeItem = row.querySelector(`[data-resume-name="${CSS.escape(activeResumeName)}"]`);
+      if (!activeItem) return;
+      row.scrollTo({
+        left: Math.max(0, activeItem.offsetLeft - 2),
+        behavior: "smooth",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [resumePickerOpen, activeResumeName, resumeUploads.length]);
 
   useEffect(() => {
     function handleGlobalTypeToFocus(event) {
@@ -809,6 +1155,9 @@ export default function App() {
       if (scheduleToastTimerRef.current) {
         clearTimeout(scheduleToastTimerRef.current);
       }
+      if (resumeToastTimerRef.current) {
+        clearTimeout(resumeToastTimerRef.current);
+      }
       if (chatAbortRef.current) {
         chatAbortRef.current.abort();
       }
@@ -817,6 +1166,9 @@ export default function App() {
 
   async function loadReport(reportPath) {
     try {
+      if (isMobileLayout) {
+        closeMobileSidebar();
+      }
       if (introMode) {
         setIntroFadingOut(true);
         await new Promise((resolve) => setTimeout(resolve, 280));
@@ -883,7 +1235,14 @@ export default function App() {
       await refreshResumeUploads();
       setResumePickerOpen(true);
       setResumePlusClosing(false);
-      appendText(`Resume uploaded. Extracted ${payload.characters_extracted} characters.`);
+      setResumeToastNonce((value) => value + 1);
+      setResumeToastVisible(true);
+      if (resumeToastTimerRef.current) {
+        clearTimeout(resumeToastTimerRef.current);
+      }
+      resumeToastTimerRef.current = setTimeout(() => {
+        setResumeToastVisible(false);
+      }, 4500);
     } catch (error) {
       appendText(error.message);
     } finally {
@@ -934,6 +1293,7 @@ export default function App() {
           session_id: sessionId,
           resume_name: activeResume?.name || "",
           resume_display_name: activeResume?.display_name || "",
+          timezone: getBrowserTimeZone(),
         }),
         signal: abortController.signal,
       });
@@ -982,82 +1342,31 @@ export default function App() {
     setShowEmailValidation(false);
   }
 
-  async function openProfileModal() {
-    setProfileModalOpen(true);
-    setProfileResumeListOpen(true);
-    setProfileLoading(true);
-    try {
-      const payload = await api("/api/preferences");
-      const text = String(payload?.preferences || "");
-      setProfilePreferences(text);
-      const firstLine = text.split("\n").find((line) => line.trim()) || "";
-      setProfileTargetIndustry(firstLine);
-    } catch (error) {
-      appendText(error.message);
-      setProfilePreferences("");
-      setProfileTargetIndustry("");
-    } finally {
-      setProfileLoading(false);
-    }
-  }
-
-  function closeProfileModal() {
-    setProfileModalOpen(false);
-    setProfileResumeListOpen(false);
-  }
-
-  async function handleSaveProfile() {
-    const next = profilePreferences.trim();
-    if (!next) {
-      appendText("Preferences text cannot be empty.");
-      return;
-    }
-    setProfileSaving(true);
-    try {
-      await api("/api/preferences", {
-        method: "POST",
-        body: JSON.stringify({ preferences: next }),
-      });
-      setProfileModalOpen(false);
-      setProfileResumeListOpen(false);
-    } catch (error) {
-      appendText(error.message);
-    } finally {
-      setProfileSaving(false);
-    }
-  }
-
   function normalizeSchedulePayload(payload) {
-    return {
-      enabled: Boolean(payload?.enabled),
-      time: String(payload?.time || DEFAULT_SCHEDULE.time),
-      days: {
-        mon: Boolean(payload?.days?.mon),
-        tue: Boolean(payload?.days?.tue),
-        wed: Boolean(payload?.days?.wed),
-        thu: Boolean(payload?.days?.thu),
-        fri: Boolean(payload?.days?.fri),
-        sat: Boolean(payload?.days?.sat),
-        sun: Boolean(payload?.days?.sun),
-      },
-      keywords: String(payload?.keywords || DEFAULT_SCHEDULE.keywords),
-      location: String(payload?.location || DEFAULT_SCHEDULE.location),
-      pages: Number(payload?.pages || DEFAULT_SCHEDULE.pages),
-      email_to: String(payload?.email_to || DEFAULT_SCHEDULE.email_to),
-    };
+    return convertScheduleForViewer(
+      payload,
+      String(payload?.timezone || DEFAULT_SCHEDULE.timezone || getBrowserTimeZone()),
+      getBrowserTimeZone(),
+    );
   }
 
   async function openScheduleModal() {
     setScheduleModalOpen(true);
     setShowScheduleEmailValidation(false);
     setScheduleLoading(true);
-    setScheduleLoadingSlow(false);
-    if (scheduleLoadingTimerRef.current) {
-      clearTimeout(scheduleLoadingTimerRef.current);
-    }
-    scheduleLoadingTimerRef.current = setTimeout(() => {
-      setScheduleLoadingSlow(true);
-    }, 6000);
+    setScheduleLoadingMessage("Loading schedule...");
+    scheduleLoadingTimersRef.current.forEach((timerId) => clearTimeout(timerId));
+    scheduleLoadingTimersRef.current = [];
+    scheduleLoadingTimersRef.current.push(
+      setTimeout(() => {
+        setScheduleLoadingMessage("Just a sec...");
+      }, 6000),
+    );
+    scheduleLoadingTimersRef.current.push(
+      setTimeout(() => {
+        setScheduleLoadingMessage("Almost got it...");
+      }, 11000),
+    );
     try {
       const payload = await api("/api/schedule");
       const normalized = normalizeSchedulePayload(payload);
@@ -1069,11 +1378,9 @@ export default function App() {
       setScheduleDailyEnabled(Object.values(DEFAULT_SCHEDULE.days).every(Boolean));
     } finally {
       setScheduleLoading(false);
-      setScheduleLoadingSlow(false);
-      if (scheduleLoadingTimerRef.current) {
-        clearTimeout(scheduleLoadingTimerRef.current);
-        scheduleLoadingTimerRef.current = null;
-      }
+      scheduleLoadingTimersRef.current.forEach((timerId) => clearTimeout(timerId));
+      scheduleLoadingTimersRef.current = [];
+      setScheduleLoadingMessage("Loading schedule...");
     }
   }
 
@@ -1081,17 +1388,13 @@ export default function App() {
     setScheduleModalOpen(false);
     setShowScheduleEmailValidation(false);
     setScheduleLoading(false);
-    setScheduleLoadingSlow(false);
-    if (scheduleLoadingTimerRef.current) {
-      clearTimeout(scheduleLoadingTimerRef.current);
-      scheduleLoadingTimerRef.current = null;
-    }
+    scheduleLoadingTimersRef.current.forEach((timerId) => clearTimeout(timerId));
+    scheduleLoadingTimersRef.current = [];
+    setScheduleLoadingMessage("Loading schedule...");
   }
 
   useEffect(() => () => {
-    if (scheduleLoadingTimerRef.current) {
-      clearTimeout(scheduleLoadingTimerRef.current);
-    }
+    scheduleLoadingTimersRef.current.forEach((timerId) => clearTimeout(timerId));
   }, []);
 
   function toggleScheduleDay(dayKey) {
@@ -1144,7 +1447,11 @@ export default function App() {
     try {
       const payload = await api("/api/schedule", {
         method: "POST",
-        body: JSON.stringify({ ...scheduleForm, email_to: trimmedScheduleEmail }),
+        body: JSON.stringify({
+          ...scheduleForm,
+          timezone: getBrowserTimeZone(),
+          email_to: trimmedScheduleEmail,
+        }),
       });
       const normalized = normalizeSchedulePayload(payload);
       setScheduleForm(normalized);
@@ -1156,7 +1463,7 @@ export default function App() {
       }
       scheduleToastTimerRef.current = setTimeout(() => {
         setScheduleToastVisible(false);
-      }, 1800);
+      }, 3000);
     } catch (error) {
       appendText(error.message);
     } finally {
@@ -1283,6 +1590,7 @@ export default function App() {
   }
 
   function showLeftTooltip(event, text) {
+    if (isMobileLayout) return;
     const rect = event.currentTarget.getBoundingClientRect();
     setFloatingTooltip({
       visible: true,
@@ -1294,17 +1602,40 @@ export default function App() {
   }
 
   function showTopTooltip(event, text) {
+    if (isMobileLayout) return;
     const rect = event.currentTarget.getBoundingClientRect();
+    const estimatedWidth = Math.min(260, Math.max(120, String(text || "").length * 7.5 + 24));
+    const estimatedHeight = 32;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const safeLeft = Math.min(
+      Math.max(rect.left + rect.width / 2, estimatedWidth / 2 + 8),
+      Math.max(estimatedWidth / 2 + 8, viewportWidth - estimatedWidth / 2 - 8),
+    );
+    const safeTop = Math.max(estimatedHeight + 8, rect.top - 8);
     setFloatingTooltip({
       visible: true,
       text,
-      top: rect.top - 8,
-      left: rect.left + rect.width / 2,
+      top: Math.min(safeTop, Math.max(estimatedHeight + 8, viewportHeight - 8)),
+      left: safeLeft,
       placement: "top",
     });
   }
 
   function showRightTooltip(event, text) {
+    if (isMobileLayout) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setFloatingTooltip({
+      visible: true,
+      text,
+      top: rect.top + rect.height / 2,
+      left: rect.right + 10,
+      placement: "right",
+    });
+  }
+
+  function showSidebarTooltip(event, text) {
+    if (isMobileLayout) return;
     const rect = event.currentTarget.getBoundingClientRect();
     setFloatingTooltip({
       visible: true,
@@ -1318,6 +1649,17 @@ export default function App() {
   function hideTooltip() {
     setFloatingTooltip({ visible: false, text: "", top: 0, left: 0, placement: "left" });
   }
+
+  function getResumeToggleTooltipText() {
+    if (!hasResume) return "Upload Resume";
+    return "View Resumes";
+  }
+
+  useEffect(() => {
+    if (isMobileLayout) {
+      hideTooltip();
+    }
+  }, [isMobileLayout]);
 
   function showResumeThumbTooltip(event, text) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -1334,6 +1676,9 @@ export default function App() {
   }
 
   function handleNewHunt() {
+    if (isMobileLayout) {
+      closeMobileSidebar();
+    }
     if (introMode) return;
 
     setReturningToIntro(true);
@@ -1590,17 +1935,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isMobileLayout || !(mobileSidebarOpen || mobileSidebarClosing)) {
-      document.body.style.overflow = "";
-      return undefined;
-    }
-
     const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const shouldLockScroll = introMode || (isMobileLayout && (mobileSidebarOpen || mobileSidebarClosing));
+    document.body.style.overflow = shouldLockScroll ? "hidden" : "";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [isMobileLayout, mobileSidebarOpen, mobileSidebarClosing]);
+  }, [introMode, isMobileLayout, mobileSidebarOpen, mobileSidebarClosing]);
 
   const trimmedEmail = emailTo.trim();
   const canSubmitQuery = query.trim().length > 0;
@@ -1658,20 +1999,23 @@ export default function App() {
             </div>
           ) : (
             <button
-              className="icon-button sidebar-toggle has-tooltip sidebar-tooltip-side"
-              data-tooltip={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
+              className="icon-button sidebar-toggle"
               aria-label={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
-              onMouseEnter={() => {
+              onMouseEnter={(event) => {
+                showSidebarTooltip(event, sidebarCollapsed ? "Open sidebar" : "Collapse sidebar");
                 if (sidebarCollapsed && collapsedHoverArmed) {
                   setCollapsedHoverActive(true);
                 }
               }}
+              onFocus={(event) => showSidebarTooltip(event, sidebarCollapsed ? "Open sidebar" : "Collapse sidebar")}
               onMouseLeave={() => {
+                hideTooltip();
                 if (sidebarCollapsed) {
                   setCollapsedHoverActive(false);
                   setCollapsedHoverArmed(true);
                 }
               }}
+              onBlur={hideTooltip}
               onClick={() => {
                 setSidebarAnimating(true);
                 if (sidebarAnimTimerRef.current) {
@@ -1702,26 +2046,35 @@ export default function App() {
 
         <div className="sidebar-actions">
           <button
-            className={`profile-button sidebar-action-button ${sidebarCollapsed ? "has-tooltip sidebar-collapsed-tooltip" : ""}`}
-            data-tooltip={sidebarCollapsed ? "New Hunt" : ""}
+            className="profile-button sidebar-action-button"
             onClick={handleNewHunt}
+            onMouseEnter={(event) => showSidebarTooltip(event, "New Hunt")}
+            onFocus={(event) => showSidebarTooltip(event, "New Hunt")}
+            onMouseLeave={hideTooltip}
+            onBlur={hideTooltip}
           >
             <FontAwesomeIcon icon={faPenToSquare} className="sidebar-action-icon" />
             <span className={`profile-text sidebar-action-text ${sidebarCollapsed ? "hidden" : ""}`}>New Hunt</span>
           </button>
           <button
-            className={`profile-button sidebar-action-button ${sidebarCollapsed ? "has-tooltip sidebar-collapsed-tooltip" : ""}`}
-            data-tooltip={sidebarCollapsed ? "Schedule" : ""}
+            className="profile-button sidebar-action-button"
             onClick={openScheduleModal}
+            onMouseEnter={(event) => showSidebarTooltip(event, "Schedule")}
+            onFocus={(event) => showSidebarTooltip(event, "Schedule")}
+            onMouseLeave={hideTooltip}
+            onBlur={hideTooltip}
           >
             <FontAwesomeIcon icon={faCalendarDays} className="sidebar-action-icon" />
             <span className={`profile-text sidebar-action-text ${sidebarCollapsed ? "hidden" : ""}`}>Schedule</span>
           </button>
           <div ref={sidebarSearchRef} className="sidebar-search-wrap">
             <button
-              className={`profile-button sidebar-action-button ${sidebarCollapsed ? "has-tooltip sidebar-collapsed-tooltip" : ""}`}
-              data-tooltip={sidebarCollapsed ? "Search" : ""}
+              className="profile-button sidebar-action-button"
               onClick={handleSidebarSearchClick}
+              onMouseEnter={(event) => showSidebarTooltip(event, "Search")}
+              onFocus={(event) => showSidebarTooltip(event, "Search")}
+              onMouseLeave={hideTooltip}
+              onBlur={hideTooltip}
             >
               <FontAwesomeIcon icon={faMagnifyingGlass} className="sidebar-action-icon" />
               {!sidebarSearchActive && (
@@ -1759,10 +2112,30 @@ export default function App() {
                 {sidebarCollapsed ? "•" : item.name}
               </button>
 
-              {!sidebarCollapsed && (
+              {!isMobileLayout && !sidebarCollapsed && (
                 <>
                   <button
                     className={`report-menu-trigger ${openReportMenu === item.report_path ? "active" : ""}`}
+                    title="Report options"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setOpenReportMenu((current) => current === item.report_path ? "" : item.report_path);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faEllipsis} />
+                  </button>
+
+                  {openReportMenu === item.report_path && (
+                    <div className="report-menu">
+                      <button onClick={() => deleteReport(item.report_path)}>Delete report</button>
+                    </div>
+                  )}
+                </>
+              )}
+              {isMobileLayout && !sidebarCollapsed && (
+                <>
+                  <button
+                    className={`report-menu-trigger mobile-visible ${openReportMenu === item.report_path ? "active" : ""}`}
                     title="Report options"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -1785,21 +2158,28 @@ export default function App() {
 
         <div className="sidebar-bottom">
           <button
-            className={`profile-button ${sidebarCollapsed ? "has-tooltip sidebar-collapsed-tooltip" : ""}`}
-            data-tooltip={sidebarCollapsed ? "Profile" : ""}
-            aria-label="Profile"
-            onClick={openProfileModal}
+            className="profile-button"
+            type="button"
+            aria-label="About"
           >
-            <FontAwesomeIcon icon={faCircleUser} className="profile-icon" />
-            <span className={`profile-text ${sidebarCollapsed ? "hidden" : ""}`}>Profile</span>
+            <FontAwesomeIcon icon={faCircleQuestion} className="profile-icon profile-icon-about" />
+            <span className={`profile-text profile-text-about ${sidebarCollapsed ? "hidden" : ""}`}>About</span>
           </button>
         </div>
       </aside>
 
-      <section className="chat-layout" onClick={() => setOpenReportMenu("")}>
+      <section className={`chat-layout ${introMode ? "intro-scroll-locked" : ""}`} onClick={() => setOpenReportMenu("")}>
         {scheduleToastVisible && (
           <div className="schedule-save-toast" role="status" aria-live="polite">
             <span>Schedule saved</span>
+            <span className="schedule-save-toast-icon">
+              <FontAwesomeIcon icon={faCheck} />
+            </span>
+          </div>
+        )}
+        {resumeToastVisible && (
+          <div key={resumeToastNonce} className="resume-upload-toast" role="status" aria-live="polite">
+            <span>Resume uploaded</span>
             <span className="schedule-save-toast-icon">
               <FontAwesomeIcon icon={faCheck} />
             </span>
@@ -1822,59 +2202,30 @@ export default function App() {
 
             <form className="intro-composer" onSubmit={handleSubmit}>
               <div className={`composer-shell single-line ${resumePickerOpen ? "with-resume-strip" : ""}`}>
-                <div className={`resume-picker-strip ${resumePickerOpen ? "open" : ""}`}>
-                  <div className="resume-picker-scroll">
-                    {resumeUploads.length > 0 && (resumePickerOpen || resumePlusClosing) && (
-                      <button
-                        type="button"
-                        className="resume-plus "
-                        onClick={handleAddResumeClick}
-                        onMouseEnter={(event) => {
-                          if (resumePickerOpen) {
-                            showLeftTooltip(event, "Upload another resume");
-                          }
-                        }}
-                        onMouseLeave={hideTooltip}
-                        disabled={busy}
-                        aria-label="Upload another resume"
-                      >
-                        <FontAwesomeIcon icon={faPlus} />
-                      </button>
-                    )}
-                    {resumeUploads.map((item, index) => (
-                      <div key={item.name} className="resume-chip-wrap">
-                        {(() => {
-                          const thumbSrc = item.thumbnail_url ? `${API_BASE}${item.thumbnail_url}` : "";
-                          return (
-                        <button
-                          type="button"
-                          className={`resume-chip ${item.is_active ? "active" : ""} ${pulsingResumeName === item.name ? "pulse" : ""}`}
-                          aria-label={item.display_name}
-                          onClick={() => handleSelectUploadedResume(item.name)}
-                          style={thumbSrc ? { backgroundImage: `url(${thumbSrc})` } : undefined}
-                          onMouseEnter={(event) => {
-                            if (resumePickerOpen) {
-                              showTopTooltip(event, item.display_name);
-                            }
-                          }}
-                          onMouseLeave={hideTooltip}
-                        >
-                          {index + 1}
-                        </button>
-                          );
-                        })()}
-                        <button
-                          type="button"
-                          className="resume-chip-delete"
-                          aria-label={`Delete ${item.display_name}`}
-                          onClick={() => handleDeleteUploadedResume(item.name)}
-                        >
-                          <FontAwesomeIcon icon={faXmark} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <ResumePicker
+                  uploads={resumeUploads}
+                  open={resumePickerOpen}
+                  closing={resumePlusClosing}
+                  busy={busy}
+                  activeResumeName={activeResumeName}
+                  pulsingResumeName={pulsingResumeName}
+                  apiBase={API_BASE}
+                  onAddClick={handleAddResumeClick}
+                  onSelect={handleSelectUploadedResume}
+                  onDelete={handleDeleteUploadedResume}
+                  onPlusMouseEnter={(event) => {
+                    if (resumePickerOpen) {
+                      showTopTooltip(event, "Upload another resume");
+                    }
+                  }}
+                  onItemMouseEnter={(event, displayName) => {
+                    if (resumePickerOpen) {
+                      showTopTooltip(event, displayName);
+                    }
+                  }}
+                  onItemMouseLeave={hideTooltip}
+                  onAddMouseLeave={hideTooltip}
+                />
                 <div className="composer-main-row">
                   <div className={`resume-icon-stack ${resumePickerOpen ? "open" : ""}`}>
                     <button
@@ -1882,9 +2233,7 @@ export default function App() {
                       className={`upload-inline-button resume-toggle-button ${resumePickerOpen ? "open" : ""}`}
                       onClick={onResumeButtonClick}
                       onMouseEnter={(event) => {
-                        if (resumePickerOpen) {
-                          showLeftTooltip(event, "Close resumes");
-                        }
+                        showTopTooltip(event, resumePickerOpen ? "Close resumes" : getResumeToggleTooltipText());
                       }}
                       onMouseLeave={hideTooltip}
                       disabled={busy}
@@ -1929,7 +2278,7 @@ export default function App() {
           {messages.map((message) => (
             <div
               key={message.id}
-              className={`chat-message ${message.role === "user" ? "user" : "assistant"}`}
+              className={`chat-message ${message.role === "user" ? "user" : "assistant"} ${message.className || ""}`}
               ref={(element) => { messageRefs.current[message.id] = element; }}
             >
               {message.type === "report" ? (
@@ -1939,6 +2288,8 @@ export default function App() {
                   emailBusy={emailBusy}
                   onShowEmailTooltip={(event) => showRightTooltip(event, "Send email")}
                   onHideTooltip={hideTooltip}
+                  isMobileLayout={isMobileLayout}
+                  panelRef={(element) => { reportPanelRefs.current[message.id] = element; }}
                 />
               ) : (
                 message.role === "user" ? (
@@ -2008,59 +2359,30 @@ export default function App() {
           onSubmit={handleSubmit}
         >
           <div className={`composer-shell single-line ${resumePickerOpen ? "with-resume-strip" : ""}`}>
-            <div className={`resume-picker-strip ${resumePickerOpen ? "open" : ""}`}>
-              <div className="resume-picker-scroll">
-                {resumeUploads.length > 0 && (resumePickerOpen || resumePlusClosing) && (
-                  <button
-                    type="button"
-                    className="resume-plus "
-                    onClick={handleAddResumeClick}
-                    onMouseEnter={(event) => {
-                      if (resumePickerOpen) {
-                        showLeftTooltip(event, "Upload another resume");
-                      }
-                    }}
-                    onMouseLeave={hideTooltip}
-                    disabled={busy}
-                    aria-label="Upload another resume"
-                  >
-                    <FontAwesomeIcon icon={faPlus} />
-                  </button>
-                )}
-                {resumeUploads.map((item, index) => (
-                  <div key={item.name} className="resume-chip-wrap">
-                    {(() => {
-                      const thumbSrc = item.thumbnail_url ? `${API_BASE}${item.thumbnail_url}` : "";
-                      return (
-                    <button
-                      type="button"
-                      className={`resume-chip ${item.is_active ? "active" : ""} ${pulsingResumeName === item.name ? "pulse" : ""}`}
-                      aria-label={item.display_name}
-                      onClick={() => handleSelectUploadedResume(item.name)}
-                      style={thumbSrc ? { backgroundImage: `url(${thumbSrc})` } : undefined}
-                      onMouseEnter={(event) => {
-                        if (resumePickerOpen) {
-                          showTopTooltip(event, item.display_name);
-                        }
-                      }}
-                      onMouseLeave={hideTooltip}
-                    >
-                      {index + 1}
-                    </button>
-                      );
-                    })()}
-                    <button
-                      type="button"
-                      className="resume-chip-delete"
-                      aria-label={`Delete ${item.display_name}`}
-                      onClick={() => handleDeleteUploadedResume(item.name)}
-                    >
-                      <FontAwesomeIcon icon={faXmark} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <ResumePicker
+              uploads={resumeUploads}
+              open={resumePickerOpen}
+              closing={resumePlusClosing}
+              busy={busy}
+              activeResumeName={activeResumeName}
+              pulsingResumeName={pulsingResumeName}
+              apiBase={API_BASE}
+              onAddClick={handleAddResumeClick}
+              onSelect={handleSelectUploadedResume}
+              onDelete={handleDeleteUploadedResume}
+              onPlusMouseEnter={(event) => {
+                if (resumePickerOpen) {
+                  showTopTooltip(event, "Upload another resume");
+                }
+              }}
+              onItemMouseEnter={(event, displayName) => {
+                if (resumePickerOpen) {
+                  showTopTooltip(event, displayName);
+                }
+              }}
+              onItemMouseLeave={hideTooltip}
+              onAddMouseLeave={hideTooltip}
+            />
             <div className="composer-main-row">
               <div className={`resume-icon-stack ${resumePickerOpen ? "open" : ""}`}>
                 <button
@@ -2068,9 +2390,7 @@ export default function App() {
                   className={`upload-inline-button resume-toggle-button ${resumePickerOpen ? "open" : ""}`}
                   onClick={onResumeButtonClick}
                   onMouseEnter={(event) => {
-                    if (resumePickerOpen) {
-                      showLeftTooltip(event, "Close resumes");
-                    }
+                    showTopTooltip(event, resumePickerOpen ? "Close resumes" : getResumeToggleTooltipText());
                   }}
                   onMouseLeave={hideTooltip}
                   disabled={busy}
@@ -2135,6 +2455,12 @@ export default function App() {
                 className={`email-modal-input ${showEmailError ? "invalid" : ""}`}
                 value={emailTo}
                 onChange={(event) => setEmailTo(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleSendEmailFromModal();
+                  }
+                }}
                 placeholder="recipient@example.com"
               />
               {showEmailError && <p className="email-modal-error">Enter a valid email</p>}
@@ -2181,8 +2507,13 @@ export default function App() {
               <p className="schedule-modal-caption">
                 Choose when automatic searches run and where scheduled reports should be sent.
               </p>
+              <p className="schedule-timezone-note">
+                Times use your local time zone: <span>{scheduleForm.timezone || getBrowserTimeZone()}</span>
+              </p>
               {scheduleLoading ? (
-                <p className="muted">{scheduleLoadingSlow ? "Just a sec..." : "Loading schedule..."}</p>
+                <p className="muted schedule-loading-message" key={scheduleLoadingMessage}>
+                  <span className="schedule-loading-fade">{scheduleLoadingMessage}</span>
+                </p>
               ) : (
                 <>
                   <div className="schedule-row">
@@ -2315,82 +2646,6 @@ export default function App() {
                   disabled={scheduleLoading || scheduleSaving}
                 >
                   {scheduleSaving ? "Saving..." : "Save Schedule"}
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
-        {profileModalOpen && createPortal(
-          <div className="schedule-modal-backdrop" onClick={closeProfileModal}>
-            <div className="schedule-modal-card profile-modal-card" onClick={(event) => event.stopPropagation()}>
-              <div className="profile-modal-header">
-                <h3 className="schedule-modal-title">
-                  <span>Profile</span>
-                </h3>
-                <button type="button" className="modal-icon-close" onClick={closeProfileModal} aria-label="Close profile modal">
-                  <FontAwesomeIcon icon={faCircleUser} className="modal-header-icon modal-header-icon-primary" />
-                  <FontAwesomeIcon icon={faXmark} className="modal-header-icon modal-header-icon-close" />
-                </button>
-              </div>
-              <p className="schedule-modal-caption">Edit your search profile.</p>
-              {profileLoading ? (
-                <p className="muted">Loading profile...</p>
-              ) : (
-                <>
-                  <div className="schedule-field">
-                    <label>Resumes</label>
-                    <div className={`resume-picker-strip profile-resume-strip ${profileResumeListOpen ? "open" : ""}`}>
-                      <div className="resume-picker-scroll">
-                        {resumeUploads.map((item, index) => (
-                          <button
-                            key={item.name}
-                            type="button"
-                            className={`resume-chip ${item.is_active ? "active" : ""}`}
-                            onClick={() => handleSelectUploadedResume(item.name)}
-                            onMouseEnter={(event) => showTopTooltip(event, item.display_name || item.name)}
-                            onMouseLeave={hideTooltip}
-                          >
-                            <span>{index + 1}</span>
-                          </button>
-                        ))}
-                        {profileResumeListOpen && (
-                          <button type="button" className="resume-plus profile-resume-plus" onClick={handleAddResumeClick} aria-label="Upload another resume">
-                            <FontAwesomeIcon icon={faPlus} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="schedule-field">
-                    <label htmlFor="profile-target-industry">Target Industry</label>
-                    <input
-                      id="profile-target-industry"
-                      type="text"
-                      value={profileTargetIndustry}
-                      onChange={(event) => setProfileTargetIndustry(event.target.value)}
-                      placeholder="Software / AI / Fintech"
-                    />
-                  </div>
-
-                  <div className="schedule-field">
-                    <label htmlFor="profile-preferences">Preferences (Field, Location, Experience, etc.)</label>
-                    <textarea
-                      id="profile-preferences"
-                      className="profile-preferences-box"
-                      value={profilePreferences}
-                      onChange={(event) => setProfilePreferences(event.target.value)}
-                      placeholder="Your search preferences..."
-                    />
-                  </div>
-                </>
-              )}
-
-              <div className="schedule-modal-actions">
-                <button type="button" className="schedule-modal-cancel" onClick={closeProfileModal}>Cancel</button>
-                <button type="button" className="schedule-modal-save" onClick={handleSaveProfile} disabled={profileLoading || profileSaving}>
-                  {profileSaving ? "Saving..." : "Save Profile"}
                 </button>
               </div>
             </div>

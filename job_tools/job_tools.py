@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 import re
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from langchain.tools import tool
 
@@ -36,6 +37,7 @@ from backend.agent import (
     list_reports,
     get_report_by_path,
     set_search_run_progress,
+    get_current_time_zone,
 )
 
 
@@ -46,6 +48,14 @@ def _current_chat_run_id() -> str:
 
 def _tool_log(name: str) -> None:
     print(f"TOOL: {name}")
+
+
+def _now_in_current_timezone() -> datetime:
+    timezone_name = str(get_current_time_zone() or "UTC").strip() or "UTC"
+    try:
+        return datetime.now(ZoneInfo(timezone_name))
+    except Exception:
+        return datetime.now()
 
 
 def _extract_report_role(keywords: str, top_jobs: List[Dict[str, Any]]) -> str:
@@ -84,8 +94,9 @@ def _extract_report_role(keywords: str, top_jobs: List[Dict[str, Any]]) -> str:
 
 def _report_display_name(role: str) -> str:
     role_text = " ".join(str(role or "").split()).title()
-    date_text = datetime.now().strftime("%B %d, %Y").replace(" 0", " ")
-    time_text = datetime.now().strftime("%I:%M %p").lstrip("0").lower()
+    now = _now_in_current_timezone()
+    date_text = now.strftime("%B %d, %Y").replace(" 0", " ")
+    time_text = now.strftime("%I:%M %p").lstrip("0").lower()
     return f"{role_text} · {date_text} {time_text}"
 
 
@@ -343,7 +354,7 @@ def mark_report_complete_today() -> dict:
     _tool_log("mark_report_complete_today")
     mark_sent_today()
 
-    return {"marked_complete": True, "date": datetime.now().strftime("%Y-%m-%d")}
+    return {"marked_complete": True, "date": _now_in_current_timezone().strftime("%Y-%m-%d")}
 
 
 def _run_search_pipeline_core(
@@ -525,7 +536,7 @@ def _run_search_pipeline_core(
         email_result = None
         if should_email:
             email_result = send_email(
-                subject=f"{search_term.title()} Job Report - {datetime.now().strftime('%Y-%m-%d')}",
+                subject=f"{search_term.title()} Job Report - {_now_in_current_timezone().strftime('%Y-%m-%d')}",
                 body=str(report_payload.get("report", "")),
                 to_email=str(to_email).strip(),
             )

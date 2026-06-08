@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 import pymupdf
 
 from job_tools.emailer import send_email
@@ -75,15 +76,22 @@ CHAT_SESSION_ACTIVE_RUNS: dict[str, str] = {}
 CHAT_SESSION_MESSAGES: dict[str, list[dict[str, Any]]] = {}
 CHAT_SESSION_LOCKS: dict[str, threading.RLock] = {}
 CHAT_SESSION_LOCKS_LOCK = threading.Lock()
+CHAT_SESSION_RUNS_LOCK = threading.Lock()
 CURRENT_RUN_ID: contextvars.ContextVar[str] = contextvars.ContextVar("current_run_id", default="")
+CURRENT_TIME_ZONE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_time_zone",
+    default=os.getenv("APP_DEFAULT_TIMEZONE", "UTC").strip() or "UTC",
+)
 SCHEDULE_LOCK = threading.Lock()
 SCHEDULE_PATH = DATA_DIR / "schedule_config.json"
 SCHEDULER_THREAD: threading.Thread | None = None
 SCHEDULER_STOP = threading.Event()
 SCHEDULE_DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+DEFAULT_TIMEZONE = os.getenv("APP_DEFAULT_TIMEZONE", "UTC").strip() or "UTC"
 DEFAULT_SCHEDULE: dict[str, Any] = {
     "enabled": False,
     "time": "09:00",
+    "timezone": DEFAULT_TIMEZONE,
     "days": {day: day in {"mon", "tue", "wed", "thu", "fri"} for day in SCHEDULE_DAY_KEYS},
     "keywords": "software engineer",
     "location": "United States",
@@ -95,6 +103,29 @@ DEFAULT_SCHEDULE: dict[str, Any] = {
 
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _normalize_timezone(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return DEFAULT_TIMEZONE
+    try:
+        ZoneInfo(raw)
+    except Exception:
+        return DEFAULT_TIMEZONE
+    return raw
+
+
+def _schedule_zone(schedule: dict[str, Any]) -> ZoneInfo:
+    return ZoneInfo(_normalize_timezone(schedule.get("timezone", DEFAULT_SCHEDULE["timezone"])))
+
+
+def _now_in_timezone(timezone_name: str | None = None) -> datetime:
+    normalized = _normalize_timezone(timezone_name or get_current_time_zone())
+    try:
+        return datetime.now(ZoneInfo(normalized))
+    except Exception:
+        return datetime.now()
 
 
 def _normalize_days(days: Any) -> dict[str, bool]:
@@ -123,6 +154,8 @@ def _normalize_schedule(payload: Any, previous: dict[str, Any] | None = None) ->
             base["enabled"] = bool(payload.get("enabled"))
         if "time" in payload:
             base["time"] = _normalize_time(payload.get("time"))
+        if "timezone" in payload:
+            base["timezone"] = _normalize_timezone(payload.get("timezone"))
         if "days" in payload:
             base["days"] = _normalize_days(payload.get("days"))
         if "keywords" in payload:
@@ -175,6 +208,7 @@ def _public_schedule(schedule: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(schedule.get("enabled", False)),
         "time": _normalize_time(schedule.get("time", DEFAULT_SCHEDULE["time"])),
+        "timezone": _normalize_timezone(schedule.get("timezone", DEFAULT_SCHEDULE["timezone"])),
         "days": _normalize_days(schedule.get("days", {})),
         "keywords": str(schedule.get("keywords", DEFAULT_SCHEDULE["keywords"])),
         "location": str(schedule.get("location", DEFAULT_SCHEDULE["location"])),
@@ -209,6 +243,18 @@ def clear_current_run_id() -> None:
     CURRENT_RUN_ID.set("")
 
 
+def get_current_time_zone() -> str:
+    return _normalize_timezone(CURRENT_TIME_ZONE.get())
+
+
+def set_current_time_zone(timezone_name: str) -> None:
+    CURRENT_TIME_ZONE.set(_normalize_timezone(timezone_name))
+
+
+def clear_current_time_zone() -> None:
+    CURRENT_TIME_ZONE.set(DEFAULT_TIMEZONE)
+
+
 def get_chat_session_lock(session_id: str) -> threading.RLock:
     normalized = str(session_id or "default").strip() or "default"
     with CHAT_SESSION_LOCKS_LOCK:
@@ -233,19 +279,19 @@ def save_chat_messages(session_id: str, messages: list[dict[str, Any]]) -> None:
 
 def get_chat_active_run_id(session_id: str) -> str:
     normalized = str(session_id or "default").strip() or "default"
-    with get_chat_session_lock(normalized):
+    with CHAT_SESSION_RUNS_LOCK:
         return CHAT_SESSION_ACTIVE_RUNS.get(normalized, "")
 
 
 def set_chat_active_run_id(session_id: str, run_id: str) -> None:
     normalized = str(session_id or "default").strip() or "default"
-    with get_chat_session_lock(normalized):
+    with CHAT_SESSION_RUNS_LOCK:
         CHAT_SESSION_ACTIVE_RUNS[normalized] = str(run_id or "").strip()
 
 
 def clear_chat_active_run_id(session_id: str) -> None:
     normalized = str(session_id or "default").strip() or "default"
-    with get_chat_session_lock(normalized):
+    with CHAT_SESSION_RUNS_LOCK:
         CHAT_SESSION_ACTIVE_RUNS.pop(normalized, None)
 
 
@@ -291,16 +337,21 @@ def _has_active_run() -> bool:
 
 
 def _run_scheduled_search(schedule: dict[str, Any]) -> None:
-    run_id = create_search_run()
-    execute_search_run(
-        run_id,
-        keywords=schedule.get("keywords", DEFAULT_SCHEDULE["keywords"]),
-        location=schedule.get("location", DEFAULT_SCHEDULE["location"]),
-        pages=int(schedule.get("pages", DEFAULT_SCHEDULE["pages"])),
-        send_email_after=True,
-        auto_email_to=str(schedule.get("email_to", "") or "").strip(),
-    )
-    return run_id
+    timezone_name = _normalize_timezone(schedule.get("timezone", DEFAULT_SCHEDULE["timezone"]))
+    set_current_time_zone(timezone_name)
+    try:
+        run_id = create_search_run()
+        execute_search_run(
+            run_id,
+            keywords=schedule.get("keywords", DEFAULT_SCHEDULE["keywords"]),
+            location=schedule.get("location", DEFAULT_SCHEDULE["location"]),
+            pages=int(schedule.get("pages", DEFAULT_SCHEDULE["pages"])),
+            send_email_after=True,
+            auto_email_to=str(schedule.get("email_to", "") or "").strip(),
+        )
+        return run_id
+    finally:
+        clear_current_time_zone()
 
 
 def _scheduler_loop() -> None:
@@ -311,7 +362,7 @@ def _scheduler_loop() -> None:
                 if not schedule.get("enabled"):
                     pass
                 else:
-                    now = datetime.now()
+                    now = datetime.now(_schedule_zone(schedule))
                     day_key = SCHEDULE_DAY_KEYS[now.weekday()]
                     slot = now.strftime("%Y-%m-%d %H:%M")
                     if (
@@ -354,7 +405,7 @@ def run_daily_schedule_cron() -> dict[str, Any]:
         if not schedule.get("enabled"):
             return {"status": "skipped", "reason": "disabled"}
 
-        now = datetime.now()
+        now = datetime.now(_schedule_zone(schedule))
         day_key = SCHEDULE_DAY_KEYS[now.weekday()]
         if not schedule.get("days", {}).get(day_key, False):
             return {"status": "skipped", "reason": "day_disabled"}
@@ -757,12 +808,13 @@ def _extract_report_role(keywords: str, top_jobs: list[dict[str, Any]]) -> str:
 
 
 def _report_display_name(role: str) -> str:
-    date_text = datetime.now().strftime("%b %d, %Y").replace(" 0", " ")
+    now = _now_in_timezone()
+    date_text = now.strftime("%b %d, %Y").replace(" 0", " ")
     return f"{role} · {date_text}"
 
 
 def _build_report(scored_jobs: list[dict[str, Any]], keywords: str) -> dict[str, Any]:
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = _now_in_timezone().strftime("%Y-%m-%d")
 
     ordered_jobs = sorted(scored_jobs, key=lambda item: item.get("score", 0), reverse=True)
     top_5 = ordered_jobs[:5]
@@ -867,7 +919,7 @@ def execute_search_run(
         if send_email_after:
             _guard_canceled(run_id)
             _set_progress(run_id, status="running", progress=95, step="Sending email")
-            subject = f"Scheduled SWE Job Report - {datetime.now().strftime('%Y-%m-%d')}"
+            subject = f"Scheduled SWE Job Report - {_now_in_timezone().strftime('%Y-%m-%d')}"
             email_result = send_email(
                 subject=subject,
                 body=result.get("report", ""),
@@ -1008,7 +1060,7 @@ def email_latest_report(to_email: str = "") -> dict[str, Any]:
             "message": "No saved report found.",
         }
 
-    subject = f"Most Recent SWE Job Report - {datetime.now().strftime('%Y-%m-%d')}"
+    subject = f"Most Recent SWE Job Report - {_now_in_timezone().strftime('%Y-%m-%d')}"
     email_result = send_email(subject=subject, body=latest["report"], to_email=to_email)
 
     return {

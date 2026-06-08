@@ -33,6 +33,8 @@ from backend.agent import (
     save_uploaded_resume,
     save_chat_messages,
     set_chat_active_run_id,
+    set_current_time_zone,
+    clear_current_time_zone,
     set_current_run_id,
     get_chat_session_lock,
     run_daily_schedule_cron,
@@ -237,34 +239,33 @@ def chat(payload: ChatRequest) -> dict:
     run_id = create_search_run()
     set_chat_active_run_id(session_id, run_id)
     set_current_run_id(run_id)
+    set_current_time_zone(payload.timezone)
     assistant_content = ""
     messages: list = []
     try:
-        session_lock = get_chat_session_lock(session_id)
-        with session_lock:
-            history = get_chat_messages(session_id)
-            conversation = list(history)
-            if payload.resume_display_name:
-                conversation = [
-                    {
-                        "role": "system",
-                        "content": f"Active resume already selected in the UI: {payload.resume_display_name}. Do not ask the user to upload a resume before searching.",
-                    }
-                ] + conversation
-            conversation.append({"role": "user", "content": user_message})
-            result = CHAT_AGENT.invoke({"messages": conversation})
-            messages = result.get("messages", [])
-            assistant_content = str(result)
-            if messages:
-                assistant_content = messages[-1].content
-            save_chat_messages(
-                session_id,
-                history
-                + [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": assistant_content},
-                ],
-            )
+        history = get_chat_messages(session_id)
+        conversation = list(history)
+        if payload.resume_display_name:
+            conversation = [
+                {
+                    "role": "system",
+                    "content": f"Active resume already selected in the UI: {payload.resume_display_name}. Do not ask the user to upload a resume before searching.",
+                }
+            ] + conversation
+        conversation.append({"role": "user", "content": user_message})
+        result = CHAT_AGENT.invoke({"messages": conversation})
+        messages = result.get("messages", [])
+        assistant_content = str(result)
+        if messages:
+            assistant_content = messages[-1].content
+        save_chat_messages(
+            session_id,
+            history
+            + [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": assistant_content},
+            ],
+        )
     except RuntimeError as error:
         if "Search was canceled by user." not in str(error):
             raise
@@ -273,6 +274,7 @@ def chat(payload: ChatRequest) -> dict:
     finally:
         clear_chat_active_run_id(session_id)
         clear_current_run_id()
+        clear_current_time_zone()
 
     response: dict = {"assistant_message": assistant_content}
     report = _extract_report(messages)
