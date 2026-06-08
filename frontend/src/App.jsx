@@ -800,56 +800,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isMobileLayout) {
-      return undefined;
-    }
-
-    const scrollContainer = chatContentRef.current?.parentElement;
-    if (!scrollContainer) {
-      return undefined;
-    }
-
-    let touchStartY = 0;
-
-    function handleTouchStart(event) {
-      touchStartY = event.touches[0]?.clientY || 0;
-    }
-
-    function handleTouchMove(event) {
-      if (event.touches.length !== 1) {
-        return;
-      }
-
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        target.closest("input, textarea, select, [contenteditable='true']")
-      ) {
-        return;
-      }
-
-      const currentY = event.touches[0]?.clientY || 0;
-      const deltaY = currentY - touchStartY;
-      const atTop = scrollContainer.scrollTop <= 0;
-      const atBottom = scrollContainer.scrollTop + scrollContainer.clientHeight >= scrollContainer.scrollHeight - 1;
-      const scrollingDown = deltaY > 0;
-      const scrollingUp = deltaY < 0;
-
-      if ((atTop && scrollingDown) || (atBottom && scrollingUp)) {
-        event.preventDefault();
-      }
-    }
-
-    document.addEventListener("touchstart", handleTouchStart, { passive: true });
-    document.addEventListener("touchmove", handleTouchMove, { passive: false });
-
-    return () => {
-      document.removeEventListener("touchstart", handleTouchStart);
-      document.removeEventListener("touchmove", handleTouchMove);
-    };
-  }, [isMobileLayout]);
-
-  useEffect(() => {
     if (!focusRequest?.id) return;
     const focusedMessage = messages.find((message) => message.id === focusRequest.id);
     const target = focusedMessage?.type === "report"
