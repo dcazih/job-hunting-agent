@@ -112,6 +112,17 @@ function getSessionId() {
   }
 }
 
+function createSessionId() {
+  const storageKey = "job_hunting_agent_session_id";
+  const created = crypto.randomUUID();
+  try {
+    window.sessionStorage.setItem(storageKey, created);
+  } catch {
+    // Ignore storage failures and fall back to the in-memory ID.
+  }
+  return created;
+}
+
 function getBrowserTimeZone() {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -594,11 +605,7 @@ function ResumePicker({
 }
 
 export default function App() {
-  const sessionIdRef = useRef(null);
-  if (!sessionIdRef.current) {
-    sessionIdRef.current = getSessionId();
-  }
-  const sessionId = sessionIdRef.current;
+  const [sessionId, setSessionId] = useState(() => getSessionId());
   const loadingWords = [
     "Working",
     "Seeking",
@@ -1750,46 +1757,31 @@ export default function App() {
     if (isMobileLayout) {
       closeMobileSidebar();
     }
-    if (introMode) return;
+    const sessionToReset = sessionId;
 
-    try {
-      if (chatAbortRef.current) {
-        chatAbortRef.current.abort();
-        chatAbortRef.current = null;
-      }
-      await api(`/api/chat/stop?session_id=${encodeURIComponent(sessionId)}`, {
-        method: "POST",
-      });
-      await api(`/api/chat/reset?session_id=${encodeURIComponent(sessionId)}`, {
-        method: "POST",
-      });
-    } catch (error) {
-      // Clear the UI regardless; backend reset is best-effort.
+    if (chatAbortRef.current) {
+      chatAbortRef.current.abort();
+      chatAbortRef.current = null;
     }
 
-    setReturningToIntro(true);
-    setIntroMode(true);
-    setIntroFadingOut(false);
-    setIntroSuggestion(() => getRandomIntroSuggestion());
-    setIntroSuggestionVisible(true);
-    setQuery("");
-    setBusy(false);
-    setOpenReportMenu("");
-    setSelectedReportPath("");
-    setOpenResumeMessageId("");
-    setSearchStatusVisible(false);
-    setSearchDisplay({
-      headline: "",
-      subline: "",
-      shimmer: false,
-    });
-    searchSummaryHoldUntilRef.current = 0;
-    searchRunIdRef.current = "";
-    setMessages([]);
+    const stopUrl = `/api/chat/stop?session_id=${encodeURIComponent(sessionToReset)}`;
+    const resetUrl = `/api/chat/reset?session_id=${encodeURIComponent(sessionToReset)}`;
 
-    setTimeout(() => {
-      setReturningToIntro(false);
-    }, 320);
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      navigator.sendBeacon(stopUrl, "");
+      navigator.sendBeacon(resetUrl, "");
+    } else {
+      void fetch(stopUrl, { method: "POST", keepalive: true }).catch(() => {});
+      void fetch(resetUrl, { method: "POST", keepalive: true }).catch(() => {});
+    }
+
+    try {
+      window.sessionStorage.removeItem("job_hunting_agent_session_id");
+    } catch {
+      // Ignore storage failures.
+    }
+
+    window.location.reload();
   }
 
   function handleSidebarSearchClick() {
