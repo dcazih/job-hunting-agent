@@ -51,6 +51,7 @@ html,
 body,
 #root {
   height: 100%;
+  overscroll-behavior-y: none;
 }
 
 body {
@@ -2355,6 +2356,8 @@ label[for="profile-preferences"] {
     background: #111111;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     z-index: 4200;
+    touch-action: none;
+    overscroll-behavior: none;
   }
 
   .mobile-menu-button {
@@ -2500,6 +2503,8 @@ label[for="profile-preferences"] {
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
   }
 
   .app-shell.mobile-layout .chat-column {
