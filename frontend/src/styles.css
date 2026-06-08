@@ -2515,26 +2515,27 @@ label[for="profile-preferences"] {
 
 @media (max-width: 560px) {
   .schedule-top-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    gap: 0.45rem;
   }
 
   .schedule-top-grid .schedule-field:first-child,
   .schedule-top-grid .schedule-field:first-child input {
-    width: 100%;
+    width: 92px;
   }
 
   .schedule-daily-field {
-    align-items: stretch;
+    align-items: center;
   }
 
   .schedule-daily-box {
-    width: 100%;
-    height: auto;
+    width: 38px;
+    height: 38px;
     min-height: 38px;
   }
 
   .schedule-days-row {
-    min-height: auto;
+    min-height: 40px;
   }
 
   .schedule-days {
