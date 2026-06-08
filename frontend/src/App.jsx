@@ -2572,17 +2572,19 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="schedule-field schedule-daily-field">
+                    <div className="schedule-field">
                       <div className="schedule-daily-title">Daily</div>
-                      <div className="schedule-daily-box">
-                        <button
-                          type="button"
-                          className={`schedule-daily-toggle ${scheduleDailyEnabled ? "on" : ""}`}
-                          onClick={toggleDailyDays}
-                          disabled={scheduleLocked}
-                        >
-                          {scheduleDailyEnabled ? "On" : "Off"}
-                        </button>
+                      <div className="schedule-days-row">
+                        <div className="schedule-days schedule-daily-days">
+                          <button
+                            type="button"
+                            className={`schedule-day schedule-daily-toggle ${scheduleDailyEnabled ? "active" : ""}`}
+                            onClick={toggleDailyDays}
+                            disabled={scheduleLocked}
+                          >
+                            {scheduleDailyEnabled ? "On" : "Off"}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
