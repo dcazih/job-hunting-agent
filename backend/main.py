@@ -358,6 +358,20 @@ def chat(payload: ChatRequest) -> dict:
         clear_current_resume_display_name()
         clear_current_time_zone()
 
+    normalized_assistant = " ".join(str(assistant_content or "").split()).lower()
+    if normalized_assistant in {"load failed", "request failed", "failed"}:
+        run = get_search_run(run_id)
+        if run:
+            run_result = run.result or {}
+            failure_message = str(run.error or run_result.get("message") or "").strip()
+            if not failure_message:
+                failure_message = {
+                    "missing_resume": "Please upload or select a resume/profile before I can search.",
+                    "missing_target_industry": "Specify a target industry before searching.",
+                }.get(str(run_result.get("status") or "").strip(), "")
+            if failure_message:
+                assistant_content = failure_message
+
     response: dict = {"assistant_message": assistant_content}
     report = _extract_report(messages)
     if report is not None:

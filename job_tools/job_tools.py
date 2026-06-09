@@ -68,7 +68,12 @@ def _normalize_location(location: str) -> str:
         return "United States"
 
     lower = text.lower()
-    if "remote" in lower and "united states" not in lower and "usa" not in lower and "us" not in lower:
+    if (
+        "remote" in lower
+        and "united states" not in lower
+        and "usa" not in lower
+        and "us" not in lower
+    ):
         return "Remote, United States"
 
     return text
@@ -96,7 +101,9 @@ def _normalize_job_level(job_level: str) -> str:
     return text
 
 
-def _build_search_keywords(target_industry: str, company: str = "", job_level: str = "") -> str:
+def _build_search_keywords(
+    target_industry: str, company: str = "", job_level: str = ""
+) -> str:
     parts = [str(target_industry or "").strip()]
     normalized_level = _normalize_job_level(job_level)
     if normalized_level:
@@ -210,7 +217,9 @@ def scrape_linkedin_jobs_tool(
     if not search_term:
         raise ValueError("keywords cannot be empty.")
 
-    jobs = scrape_jobs(keywords=search_term, location=_normalize_location(location), pages=pages)
+    jobs = scrape_jobs(
+        keywords=search_term, location=_normalize_location(location), pages=pages
+    )
 
     return {
         "keywords": search_term,
@@ -259,8 +268,11 @@ def score_jobs_against_profile(
     scored = score_jobs(
         jobs=jobs,
         resume_text=resume_text,
-        preferences_text=(preferences_text or "").strip() + (
-            f"\n\nSaved memory:\n{memory_text}" if str(memory_text or "").strip() else ""
+        preferences_text=(preferences_text or "").strip()
+        + (
+            f"\n\nSaved memory:\n{memory_text}"
+            if str(memory_text or "").strip()
+            else ""
         ),
     )
 
@@ -282,17 +294,24 @@ def build_daily_report(scored_jobs: List[Dict[str, Any]]) -> dict:
 
     # Be robust to agent passing the full tool payload instead of only the list.
     if isinstance(scored_jobs, dict):
-        target_industry = str(
-            scored_jobs.get("target_industry")
-            or scored_jobs.get("keywords")
+        target_industry = (
+            str(
+                scored_jobs.get("target_industry")
+                or scored_jobs.get("keywords")
+                or target_industry
+            ).strip()
             or target_industry
-        ).strip() or target_industry
+        )
         scored_jobs = list(scored_jobs.get("scored_jobs", []) or [])
     if not isinstance(scored_jobs, list):
         scored_jobs = []
 
     display_target_industry = target_industry.strip()
-    report_role = _extract_report_role(display_target_industry, scored_jobs) if display_target_industry else "Job Search"
+    report_role = (
+        _extract_report_role(display_target_industry, scored_jobs)
+        if display_target_industry
+        else "Job Search"
+    )
     report_title = _report_display_name(report_role)
 
     scored_jobs = sorted(
@@ -418,7 +437,10 @@ def mark_report_complete_today() -> dict:
     _tool_log("mark_report_complete_today")
     mark_sent_today()
 
-    return {"marked_complete": True, "date": _now_in_current_timezone().strftime("%Y-%m-%d")}
+    return {
+        "marked_complete": True,
+        "date": _now_in_current_timezone().strftime("%Y-%m-%d"),
+    }
 
 
 def _run_search_pipeline_core(
@@ -461,7 +483,9 @@ def _run_search_pipeline_core(
         search_location = _normalize_location(location)
         search_company = str(company or "").strip()
         search_job_level = _normalize_job_level(job_level)
-        search_keywords = _build_search_keywords(search_term, search_company, search_job_level)
+        search_keywords = _build_search_keywords(
+            search_term, search_company, search_job_level
+        )
 
         set_search_run_progress(
             run_id,
@@ -499,7 +523,9 @@ def _run_search_pipeline_core(
         resume_text = str(profile.get("resume_text", "") or "")
         preferences_text = str(profile.get("preferences_text", "") or "")
         if not resume_text.strip():
-            message = "No resume found. Add either profile/resume.pdf or profile/resume.txt."
+            message = (
+                "No resume found. Add either profile/resume.pdf or profile/resume.txt."
+            )
             set_search_run_progress(
                 run_id,
                 status="failed",
@@ -545,12 +571,24 @@ def _run_search_pipeline_core(
             on_job_progress=lambda payload: set_search_run_progress(
                 run_id,
                 status="running",
-                progress=min(40, 20 + int((payload.get("job_index", 1) / max(1, int(payload.get("page_job_count", 1)))) * 15)),
+                progress=min(
+                    40,
+                    20
+                    + int(
+                        (
+                            payload.get("job_index", 1)
+                            / max(1, int(payload.get("page_job_count", 1)))
+                        )
+                        * 15
+                    ),
+                ),
                 step="Fetching job details",
                 result={
                     "phase": "fetching",
                     "current_job_title": str(payload.get("job", {}).get("title", "")),
-                    "current_job_company": str(payload.get("job", {}).get("company", "")),
+                    "current_job_company": str(
+                        payload.get("job", {}).get("company", "")
+                    ),
                     "scraped_count": int(payload.get("job_index", 0) or 0),
                     "page_index": int(payload.get("page_index", 0) or 0),
                     "page_job_count": int(payload.get("page_job_count", 0) or 0),
@@ -561,15 +599,21 @@ def _run_search_pipeline_core(
             on_filter_progress=lambda payload: set_search_run_progress(
                 run_id,
                 status="running",
-                progress=40 + int(
-                    (payload.get("job_index", 0) / max(1, int(payload.get("job_total", 1))))
+                progress=40
+                + int(
+                    (
+                        payload.get("job_index", 0)
+                        / max(1, int(payload.get("job_total", 1)))
+                    )
                     * 25
                 ),
                 step="Filtering",
                 result={
                     "phase": "filtering",
                     "current_job_title": str(payload.get("job", {}).get("title", "")),
-                    "current_job_company": str(payload.get("job", {}).get("company", "")),
+                    "current_job_company": str(
+                        payload.get("job", {}).get("company", "")
+                    ),
                     "filtering_index": int(payload.get("job_index", 0) or 0),
                     "filtering_total": int(payload.get("job_total", 0) or 0),
                     "kept_count": int(payload.get("kept_count", 0) or 0),
@@ -579,12 +623,23 @@ def _run_search_pipeline_core(
             on_page_progress=lambda payload: set_search_run_progress(
                 run_id,
                 status="running",
-                progress=min(65, 20 + int((payload.get("pages_checked", 1) / max(1, max(3, int(pages)))) * 35)),
+                progress=min(
+                    65,
+                    20
+                    + int(
+                        (payload.get("pages_checked", 1) / max(1, max(3, int(pages))))
+                        * 35
+                    ),
+                ),
                 step="Filtering",
                 result={
                     "phase": "filtering",
-                    "current_job_title": str(payload.get("current_job_title", "") or ""),
-                    "current_job_company": str(payload.get("current_job_company", "") or ""),
+                    "current_job_title": str(
+                        payload.get("current_job_title", "") or ""
+                    ),
+                    "current_job_company": str(
+                        payload.get("current_job_company", "") or ""
+                    ),
                     "scraped_count": int(payload.get("scraped_count", 0) or 0),
                     "pages_checked": int(payload.get("pages_checked", 0) or 0),
                     "page_index": int(payload.get("page_index", 0) or 0),
@@ -670,14 +725,20 @@ def _run_search_pipeline_core(
             on_progress=lambda **payload: set_search_run_progress(
                 run_id,
                 status="running",
-                progress=70 + int((payload.get("index", 0) / max(1, int(payload.get("total", 1)))) * 18),
+                progress=70
+                + int(
+                    (payload.get("index", 0) / max(1, int(payload.get("total", 1))))
+                    * 18
+                ),
                 step="Scoring jobs",
                 result={
                     "phase": "scoring",
                     "scoring_index": int(payload.get("index", 0) or 0),
                     "scoring_total": int(payload.get("total", 0) or 0),
                     "current_job_title": str(payload.get("job", {}).get("title", "")),
-                    "current_job_company": str(payload.get("job", {}).get("company", "")),
+                    "current_job_company": str(
+                        payload.get("job", {}).get("company", "")
+                    ),
                     "fresh_count": fresh_count,
                     "scraped_count": found_count,
                 },
@@ -755,7 +816,7 @@ def run_search_pipeline(
     active_resume_display_name = get_current_resume_display_name()
     if not active_resume_display_name:
         run_id = _current_chat_run_id()
-        message = "Select a resume in the UI before searching."
+        message = "Please upload a resume before I can search."
         if run_id:
             set_search_run_progress(
                 run_id,

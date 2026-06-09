@@ -1,3 +1,4 @@
+import os
 import time
 import random
 import requests
@@ -17,6 +18,10 @@ HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
 }
+REQUEST_TIMEOUT_SECONDS = float(os.getenv("LINKEDIN_REQUEST_TIMEOUT_SECONDS", "8"))
+SCRAPE_DELAY_MULTIPLIER = float(
+    os.getenv("LINKEDIN_SCRAPE_DELAY_MULTIPLIER", "0" if os.getenv("VERCEL") else "1")
+)
 
 
 def build_search_url(keywords, location, start=0):
@@ -40,7 +45,7 @@ def build_search_url(keywords, location, start=0):
 def fetch_search_page(keywords, location, start=0):
     url = build_search_url(keywords, location, start)
 
-    response = requests.get(url, headers=HEADERS, timeout=15)
+    response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
 
     if response.status_code != 200:
         raise RuntimeError(
@@ -121,7 +126,7 @@ def fetch_job_description(job_id):
 
     url = JOB_DETAIL_URL.format(job_id)
 
-    response = requests.get(url, headers=HEADERS, timeout=15)
+    response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
 
     if response.status_code != 200:
         print(f"Could not fetch description for {job_id}: {response.status_code}")
@@ -142,6 +147,7 @@ def scrape_jobs(
     location="United States",
     pages=1,
     start_page=0,
+    max_jobs=None,
     is_canceled=None,
     on_job_found=None,
 ):
@@ -161,6 +167,9 @@ def scrape_jobs(
         # Get jobs on the page
         html = fetch_search_page(keywords, location, start=start)
         jobs = parse_job_cards(html)
+        if max_jobs is not None:
+            remaining = max(0, int(max_jobs) - len(all_jobs))
+            jobs = jobs[:remaining]
         print(f"Found {len(jobs)} jobs on this page.")
 
         # Get descriptions of found jobs
@@ -180,7 +189,7 @@ def scrape_jobs(
 
             job["description"] = fetch_job_description(job["job_id"])
 
-            sleep_secs = random.uniform(0.6, 1.4)
+            sleep_secs = random.uniform(0.6, 1.4) * SCRAPE_DELAY_MULTIPLIER
             if callable(is_canceled):
                 slept = 0.0
                 while slept < sleep_secs:
@@ -194,7 +203,7 @@ def scrape_jobs(
 
         all_jobs.extend(jobs)
 
-        sleep_secs = random.uniform(1, 2)  # Prevents endpoint hammering.
+        sleep_secs = random.uniform(1, 2) * SCRAPE_DELAY_MULTIPLIER
         if callable(is_canceled):
             slept = 0.0
             while slept < sleep_secs:

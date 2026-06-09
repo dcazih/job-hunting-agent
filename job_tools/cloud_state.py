@@ -8,7 +8,10 @@ from typing import Any
 import psycopg
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATABASE_URL = (
+    os.getenv("DATABASE_URL", "").strip()
+    or os.getenv("POSTGRES_URL", "").strip()
+)
 
 
 @contextmanager
@@ -71,4 +74,3 @@ def set_json(key: str, value: Any) -> None:
                 (key, payload),
             )
         conn.commit()
-

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -28,8 +29,11 @@ from job_tools.resume_loader import (
     store_resume_text,
 )
 from job_tools.storage import (
+    delete_saved_report_entry,
+    get_saved_report_entry,
     load_latest_report,
     mark_sent_today,
+    list_saved_reports,
     save_report,
     save_seen_job_ids,
     load_seen_job_ids,
@@ -48,6 +52,7 @@ PROFILE_DIR = RUNTIME_ROOT / "profile"
 UPLOADS_DIR = RUNTIME_ROOT / "uploads"
 UPLOAD_THUMBNAILS_DIR = UPLOADS_DIR / "thumbnails"
 RESUME_STATE_PATH = DATA_DIR / "resume_state.json"
+RESUME_UPLOADS_KEY = "resume.uploads"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -317,18 +322,26 @@ def clear_chat_messages(session_id: str) -> None:
 
 def get_chat_active_run_id(session_id: str) -> str:
     normalized = str(session_id or "default").strip() or "default"
+    if cloud_enabled():
+        return str(cloud_get_json(f"chat.active_run.{normalized}", "") or "").strip()
     with CHAT_SESSION_RUNS_LOCK:
         return CHAT_SESSION_ACTIVE_RUNS.get(normalized, "")
 
 
 def set_chat_active_run_id(session_id: str, run_id: str) -> None:
     normalized = str(session_id or "default").strip() or "default"
+    if cloud_enabled():
+        cloud_set_json(f"chat.active_run.{normalized}", str(run_id or "").strip())
+        return
     with CHAT_SESSION_RUNS_LOCK:
         CHAT_SESSION_ACTIVE_RUNS[normalized] = str(run_id or "").strip()
 
 
 def clear_chat_active_run_id(session_id: str) -> None:
     normalized = str(session_id or "default").strip() or "default"
+    if cloud_enabled():
+        cloud_set_json(f"chat.active_run.{normalized}", "")
+        return
     with CHAT_SESSION_RUNS_LOCK:
         CHAT_SESSION_ACTIVE_RUNS.pop(normalized, None)
 
@@ -591,6 +604,35 @@ def _thumbnail_path_for_upload(upload_name: str) -> Path:
     return UPLOAD_THUMBNAILS_DIR / f"{Path(upload_name).stem}.png"
 
 
+def _cloud_resume_uploads() -> list[dict[str, Any]]:
+    uploads = cloud_get_json(RESUME_UPLOADS_KEY, []) if cloud_enabled() else []
+    return [upload for upload in (uploads or []) if isinstance(upload, dict)]
+
+
+def _save_cloud_resume_uploads(uploads: list[dict[str, Any]]) -> None:
+    if cloud_enabled():
+        cloud_set_json(RESUME_UPLOADS_KEY, uploads)
+
+
+def _find_cloud_resume_upload(upload_name: str) -> dict[str, Any] | None:
+    safe_name = Path(upload_name).name
+    for upload in _cloud_resume_uploads():
+        if str(upload.get("name", "") or "") == safe_name:
+            return upload
+    return None
+
+
+def _materialize_cloud_resume_upload(upload: dict[str, Any]) -> Path:
+    safe_name = Path(str(upload.get("name", "") or "")).name
+    content_b64 = str(upload.get("content_b64", "") or "")
+    upload_path = UPLOADS_DIR / safe_name
+    if safe_name and content_b64:
+        content = base64.b64decode(content_b64.encode("ascii"))
+        if not upload_path.exists() or upload_path.read_bytes() != content:
+            upload_path.write_bytes(content)
+    return upload_path
+
+
 def _ensure_resume_thumbnail(pdf_path: Path) -> Path | None:
     if not pdf_path.exists():
         return None
@@ -622,9 +664,22 @@ def save_uploaded_resume(file_name: str, content: bytes) -> dict[str, Any]:
     upload_path.write_bytes(content)
     _ensure_resume_thumbnail(upload_path)
 
+    if cloud_enabled():
+        uploads = [upload for upload in _cloud_resume_uploads() if str(upload.get("name", "") or "") != safe_name]
+        uploads.insert(
+            0,
+            {
+                "name": safe_name,
+                "display_name": safe_name.split("_", 1)[1] if "_" in safe_name else safe_name,
+                "content_b64": base64.b64encode(content).decode("ascii"),
+                "uploaded_at": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+        _save_cloud_resume_uploads(uploads)
+
     # Canonical active resume location used by current agent/profile loader.
     shutil.copy(upload_path, DEFAULT_RESUME_PDF)
-    RESUME_STATE_PATH.write_text(json.dumps({"active_upload_name": safe_name}), encoding="utf-8")
+    _set_active_upload_name(safe_name)
 
     extracted = refresh_resume_text_from_pdf()
 
@@ -671,6 +726,12 @@ def get_resume_status() -> dict[str, Any]:
     cached_resume_text = ""
     if cloud_enabled():
         cached_resume_text = str(cloud_get_json("profile.resume_text", "") or "").strip()
+        uploads = _cloud_resume_uploads()
+        if uploads:
+            return {
+                "found": True,
+                "resume_path": str(DEFAULT_RESUME_PDF),
+            }
     return {
         "found": DEFAULT_RESUME_PDF.exists() or bool(cached_resume_text),
         "resume_path": str(DEFAULT_RESUME_PDF),
@@ -698,6 +759,33 @@ def _set_active_upload_name(name: str) -> None:
 
 def list_uploaded_resumes() -> dict[str, Any]:
     active_upload_name = _load_active_upload_name()
+    if cloud_enabled():
+        uploads = _cloud_resume_uploads()
+        if uploads and active_upload_name not in {str(item.get("name", "") or "") for item in uploads}:
+            active_upload_name = str(uploads[0].get("name", "") or "")
+            _set_active_upload_name(active_upload_name)
+            first_upload_path = _materialize_cloud_resume_upload(uploads[0])
+            if first_upload_path.exists():
+                shutil.copy(first_upload_path, DEFAULT_RESUME_PDF)
+                refresh_resume_text_from_pdf()
+
+        items = []
+        for item in uploads:
+            upload_path = _materialize_cloud_resume_upload(item)
+            thumb = _ensure_resume_thumbnail(upload_path)
+            name = str(item.get("name", "") or "")
+            display_name = str(item.get("display_name", "") or (name.split("_", 1)[1] if "_" in name else name))
+            thumb_url = f"/api/resume/uploads/{name}/thumbnail" if thumb else None
+            items.append(
+                {
+                    "name": name,
+                    "display_name": display_name,
+                    "is_active": name == active_upload_name,
+                    "thumbnail_url": thumb_url,
+                }
+            )
+        return {"resumes": items}
+
     uploads = sorted(UPLOADS_DIR.glob("*.pdf"), key=lambda path: path.stat().st_mtime)
     if uploads and active_upload_name not in {item.name for item in uploads}:
         # Ensure there is always one selected resume when uploads exist.
@@ -723,6 +811,46 @@ def list_uploaded_resumes() -> dict[str, Any]:
 
 def delete_uploaded_resume(upload_name: str) -> dict[str, Any]:
     safe_name = Path(upload_name).name
+    active_upload_name = _load_active_upload_name()
+    deleting_active = safe_name == active_upload_name
+
+    if cloud_enabled():
+        uploads = _cloud_resume_uploads()
+        target = next((upload for upload in uploads if str(upload.get("name", "") or "") == safe_name), None)
+        if target is None:
+            raise ValueError("Resume upload not found.")
+
+        thumb_path = _thumbnail_path_for_upload(safe_name)
+        if thumb_path.exists():
+            thumb_path.unlink()
+
+        uploads = [upload for upload in uploads if str(upload.get("name", "") or "") != safe_name]
+        new_active = ""
+        if deleting_active:
+            if uploads:
+                fallback = uploads[0]
+                fallback_path = _materialize_cloud_resume_upload(fallback)
+                shutil.copy(fallback_path, DEFAULT_RESUME_PDF)
+                refresh_resume_text_from_pdf()
+                new_active = str(fallback.get("name", "") or "")
+            else:
+                if DEFAULT_RESUME_PDF.exists():
+                    DEFAULT_RESUME_PDF.unlink()
+                if DEFAULT_RESUME_TXT.exists():
+                    DEFAULT_RESUME_TXT.unlink()
+                store_resume_text("")
+        else:
+            new_active = active_upload_name
+
+        _save_cloud_resume_uploads(uploads)
+        _set_active_upload_name(new_active)
+        return {
+            "status": "deleted",
+            "deleted_upload_name": safe_name,
+            "active_upload_name": new_active,
+            "remaining": len(uploads),
+        }
+
     target = UPLOADS_DIR / safe_name
     if not target.exists():
         raise ValueError("Resume upload not found.")
@@ -730,8 +858,6 @@ def delete_uploaded_resume(upload_name: str) -> dict[str, Any]:
     if thumb_path.exists():
         thumb_path.unlink()
 
-    active_upload_name = _load_active_upload_name()
-    deleting_active = safe_name == active_upload_name
     target.unlink()
 
     remaining = sorted(UPLOADS_DIR.glob("*.pdf"), key=lambda path: path.stat().st_mtime, reverse=True)
@@ -764,6 +890,21 @@ def delete_uploaded_resume(upload_name: str) -> dict[str, Any]:
 
 def set_active_uploaded_resume(upload_name: str) -> dict[str, Any]:
     safe_name = Path(upload_name).name
+    if cloud_enabled():
+        upload = _find_cloud_resume_upload(safe_name)
+        if upload is None:
+            raise ValueError("Resume upload not found.")
+        target = _materialize_cloud_resume_upload(upload)
+        _ensure_resume_thumbnail(target)
+        shutil.copy(target, DEFAULT_RESUME_PDF)
+        refresh_resume_text_from_pdf()
+        _set_active_upload_name(safe_name)
+        return {
+            "status": "selected",
+            "active_upload_name": safe_name,
+            "active_resume_path": str(DEFAULT_RESUME_PDF),
+        }
+
     target = UPLOADS_DIR / safe_name
     if not target.exists():
         raise ValueError("Resume upload not found.")
@@ -899,7 +1040,16 @@ Found and scored **{len(ordered_jobs)}** fresh jobs.
 
     role = _extract_report_role(keywords, top_5)
     report_name = _report_display_name(role)
-    report_path = save_report(report_md, report_name=report_name)
+    report_path = save_report(
+        report_md,
+        report_name=report_name,
+        report_data={
+            "top_jobs": top_5,
+            "remaining_jobs": rest,
+            "target_industry": role,
+            "job_count": len(ordered_jobs),
+        },
+    )
 
     payload = {
         "status": "complete",
@@ -1126,23 +1276,29 @@ def get_latest_report() -> dict[str, Any]:
             "remaining_jobs": [],
         }
 
-    report_path = Path(latest_report["report_path"])
-    snapshot_path = REPORTS_DIR / f"{report_path.stem}.json"
-
+    report_path_value = str(latest_report["report_path"] or "")
+    report_entry = get_saved_report_entry(report_path_value)
     top_jobs: list[dict[str, Any]] = []
     remaining_jobs: list[dict[str, Any]] = []
     target_industry = ""
 
-    if snapshot_path.exists():
-        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        top_jobs = snapshot.get("top_jobs", [])
-        remaining_jobs = snapshot.get("remaining_jobs", [])
-        target_industry = str(snapshot.get("target_industry", "") or "")
+    if report_entry:
+        top_jobs = list(report_entry.get("top_jobs", []) or [])
+        remaining_jobs = list(report_entry.get("remaining_jobs", []) or [])
+        target_industry = str(report_entry.get("target_industry", "") or "")
+    else:
+        report_path = Path(report_path_value)
+        snapshot_path = REPORTS_DIR / f"{report_path.stem}.json"
+        if snapshot_path.exists():
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            top_jobs = snapshot.get("top_jobs", [])
+            remaining_jobs = snapshot.get("remaining_jobs", [])
+            target_industry = str(snapshot.get("target_industry", "") or "")
 
     return {
         "found": True,
         "report_path": latest_report["report_path"],
-        "report_name": report_path.name,
+        "report_name": str(latest_report.get("report_name") or Path(report_path_value).name),
         "target_industry": target_industry,
         "report": latest_report["report"],
         "top_jobs": top_jobs,
@@ -1151,6 +1307,25 @@ def get_latest_report() -> dict[str, Any]:
 
 
 def get_report_by_path(report_path: str) -> dict[str, Any]:
+    if cloud_enabled():
+        entry = get_saved_report_entry(report_path)
+        if entry is None:
+            raise FileNotFoundError("Report not found.")
+        top_jobs = list(entry.get("top_jobs", []) or [])
+        remaining_jobs = list(entry.get("remaining_jobs", []) or [])
+        target_industry = str(entry.get("target_industry", "") or "")
+        job_count = int(entry.get("job_count", len(top_jobs) + len(remaining_jobs)) or 0)
+        return {
+            "found": True,
+            "report_path": str(entry.get("report_path", "") or report_path),
+            "report_name": str(entry.get("name", "") or Path(str(report_path)).name),
+            "target_industry": target_industry,
+            "report": str(entry.get("report", "") or ""),
+            "top_jobs": top_jobs,
+            "remaining_jobs": remaining_jobs,
+            "job_count": job_count,
+        }
+
     requested_path = Path(report_path).resolve()
     reports_root = REPORTS_DIR.resolve()
 
@@ -1189,20 +1364,21 @@ def get_report_by_path(report_path: str) -> dict[str, Any]:
 
 
 def list_reports() -> dict[str, Any]:
-    entries = []
-    for path in sorted(REPORTS_DIR.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True):
-        entries.append(
-            {
-                "report_path": str(path),
-                "name": path.name,
-                "modified_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
-            }
-        )
-
+    entries = list_saved_reports()
     return {"reports": entries}
 
 
 def delete_report_by_path(report_path: str) -> dict[str, Any]:
+    if cloud_enabled():
+        deleted = delete_saved_report_entry(report_path)
+        if not deleted:
+            raise FileNotFoundError("Report not found.")
+        return {
+            "status": "deleted",
+            "report_path": str(report_path),
+            "deleted_snapshot": True,
+        }
+
     requested_path = Path(report_path).resolve()
     reports_root = REPORTS_DIR.resolve()
 

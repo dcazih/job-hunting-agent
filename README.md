@@ -96,6 +96,13 @@ This repo is configured so frontend and API deploy together in one Vercel projec
 - frontend build command/output
 - Python function entry at `api/index.py`
 
+Connect a Postgres database to the Vercel project and expose either:
+
+- `DATABASE_URL`
+- `POSTGRES_URL`
+
+The database is required for durable resumes, reports, search progress, memory, and scheduler state across Vercel instances.
+
 Vercel cron is disabled in this repo. The daily scheduler is triggered by GitHub Actions instead.
 
 ## GitHub Actions scheduler setup
@@ -121,15 +128,14 @@ How it works:
 
 In local development, files are read/written under this repo.
 
-On Vercel, writable storage is ephemeral. Runtime data is redirected to:
+On Vercel, writable storage is ephemeral and is used only as a temporary cache. Runtime files are redirected to:
 
 - `/tmp/job-hunting-agent/data`
 - `/tmp/job-hunting-agent/reports`
 - `/tmp/job-hunting-agent/profile`
 - `/tmp/job-hunting-agent/uploads`
 
-That means uploads/reports/state are not durable across cold starts/instances.
-For persistent production data, move storage to external services.
+When `DATABASE_URL` or `POSTGRES_URL` is configured, durable resumes, reports, search progress, memory, and scheduler state are stored in Postgres and survive refreshes, cold starts, and different Vercel instances.
 
 ## Notes
 

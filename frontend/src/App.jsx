@@ -1465,7 +1465,13 @@ export default function App() {
         appendText("Stopped.");
         return;
       }
-      appendText(error.message);
+      const errorMessage = String(error?.message || "");
+      const isConnectionFailure = /load failed|failed to fetch|networkerror|network request failed/i.test(errorMessage);
+      appendText(
+        isConnectionFailure
+          ? "The search connection ended before it could finish. Please try again with a narrower search."
+          : errorMessage || "The search could not be completed.",
+      );
     }
   }
 

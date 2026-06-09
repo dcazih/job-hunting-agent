@@ -1,4 +1,5 @@
 import os
+import time
 from typing import List, Literal
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -33,7 +34,10 @@ def get_scoring_model():
     model_name = os.getenv("AGENT_MODEL", "openai:gpt-4.1-mini")
 
     return ChatOpenAI(
-        model=model_name.replace("openai:", ""), temperature=0
+        model=model_name.replace("openai:", ""),
+        temperature=0,
+        timeout=float(os.getenv("JOB_SCORING_LLM_TIMEOUT_SECONDS", "15")),
+        max_retries=0,
     ).with_structured_output(JobScore)
 
 
@@ -95,13 +99,29 @@ Description:
     return result.model_dump()
 
 
-def score_jobs(jobs, resume_text, preferences_text, is_canceled=None, on_progress=None):
+def score_jobs(
+    jobs,
+    resume_text,
+    preferences_text,
+    is_canceled=None,
+    on_progress=None,
+    max_runtime_seconds=None,
+):
     scored_jobs = []
     total = len(jobs)
+    runtime_limit = (
+        float(max_runtime_seconds)
+        if max_runtime_seconds is not None
+        else float(os.getenv("SCORING_MAX_RUNTIME_SECONDS", "60" if os.getenv("VERCEL") else "0"))
+    )
+    deadline = time.monotonic() + runtime_limit if runtime_limit > 0 else None
 
     for index, job in enumerate(jobs, start=1):
         if callable(is_canceled) and is_canceled():
             raise RuntimeError("Search was canceled by user.")
+        if deadline is not None and time.monotonic() >= deadline:
+            print(f"Scoring runtime limit reached after {len(scored_jobs)} jobs.")
+            break
         print(
             f"Scoring {index}/{len(jobs)}: {job.get('title')} at {job.get('company')}"
         )

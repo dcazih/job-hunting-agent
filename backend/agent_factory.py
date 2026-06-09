@@ -59,6 +59,7 @@ SEARCH INTENT:
 - If email was requested, provide `to_email` only when the user specifies a recipient.
 
 Keep answers short and tool-driven.
+- Never answer with generic failure text like "Load failed"; use the run or tool failure message instead.
 Be skeptical. Do not overstate weak matches.
 
 Clarification rules:
