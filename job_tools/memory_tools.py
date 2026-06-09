@@ -6,8 +6,10 @@ from job_tools.memory_store import (
     add_role_feedback,
     add_job_feedback,
     delete_memory_item,
+    get_last_target_industry,
     load_memory,
     memory_as_text,
+    set_last_target_industry,
 )
 
 
@@ -106,6 +108,35 @@ def read_agent_memory() -> dict:
     return {
         "memory": load_memory(),
         "memory_text": memory_as_text()
+    }
+
+
+@tool
+def remember_target_industry(target_industry: str) -> dict:
+    """
+    Remember the most recent target industry.
+    Use this after the user names an industry so later searches can reuse it.
+    """
+    _tool_log("remember_target_industry")
+    industry = set_last_target_industry(target_industry)
+
+    return {
+        "status": "remembered",
+        "target_industry": industry,
+    }
+
+
+@tool
+def read_recent_target_industry() -> dict:
+    """
+    Read the most recently remembered target industry.
+    Use this when the user omits the industry for a search request.
+    """
+    _tool_log("read_recent_target_industry")
+
+    return {
+        "found": bool(get_last_target_industry()),
+        "target_industry": get_last_target_industry(),
     }
 
 

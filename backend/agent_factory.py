@@ -14,6 +14,8 @@ from job_tools.memory_tools import (
     remember_company_feedback,
     remember_role_feedback,
     remember_job_feedback,
+    remember_target_industry,
+    read_recent_target_industry,
     read_agent_memory,
     forget_memory_item,
 )
@@ -37,9 +39,18 @@ SEARCH INTENT:
 - If the UI says a resume is already selected, do not ask the user to upload a resume.
 - Ensure at least one resume is uploaded/selected before youre allowed to call `run_search_pipeline`
 - Use `run_search_pipeline` exactly once for each new search.
-- Infer `target_industry`, `location`, and `pages` from the chat.
-- Defaults: target_industry="software engineer", location="United States", pages=1.
-- Override only the fields the user explicitly changes.
+- Infer `target_industry`, `company`, `job_level`, `location`, and `pages` from the chat.
+- If the latest message explicitly states a field, use it and do not fall back to remembered values for that field.
+- If the latest message explicitly states a target industry, treat it as the search target immediately and do not compare it against memory.
+- Never ask the user whether to prioritize the latest explicit target industry versus a remembered one.
+- Never mention remembered target industries when the user already specified one in the latest message.
+- The only default location is `United States`.
+- Do not default `target_industry`; if the user does not specify one, call `read_recent_target_industry` first and only search if a recent industry exists.
+- If no recent industry exists, ask a follow-up question before searching.
+- If the user asks for remote jobs without another location, use `Remote, United States`.
+- If a recent target industry is remembered, reuse it when the user omits one.
+- Leave `company` and `job_level` blank unless the user explicitly provides them or the prompt clearly states them.
+- After the user specifies a target industry, remember it with `remember_target_industry`.
 - Set `should_email=True` only when the user explicitly asks to email the search results or report.
 - Leave `should_email=False` by default.
 - The pipeline already loads the profile, scrapes jobs, removes seen jobs, scores the full batch, and builds the report.
@@ -49,6 +60,12 @@ SEARCH INTENT:
 
 Keep answers short and tool-driven.
 Be skeptical. Do not overstate weak matches.
+
+Clarification rules:
+- When you need missing search input, ask one short question only.
+- Do not mention default locations, remote assumptions, memory conflicts, or any other extra context unless the user asked about location.
+- Do not add follow-up sentences after the question.
+- If the latest message already contains a target industry, do not ask any clarifying question about which industry to search.
 
 Memory rules:
 - Use memory tools when the user asks to remember, forget, or report preferences.
@@ -71,11 +88,13 @@ def create_job_agent():
         display_latest_report_in_chat,
         display_report_in_chat,
         run_search_pipeline,
+        read_recent_target_industry,
         read_agent_memory,
         remember_job_preference,
         remember_company_feedback,
         remember_role_feedback,
         remember_job_feedback,
+        remember_target_industry,
         forget_memory_item,
     ]
 

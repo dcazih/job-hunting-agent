@@ -19,7 +19,10 @@ DEFAULT_MEMORY = {
     "company_feedback": [],
     "role_feedback": [],
     "job_feedback": [],
-    "search_history": []
+    "search_history": [],
+    "search_context": {
+        "last_target_industry": "",
+    },
 }
 
 
@@ -39,6 +42,11 @@ def load_memory():
         for key, value in DEFAULT_MEMORY.items():
             if key not in data:
                 data[key] = value
+        if not isinstance(data.get("search_context"), dict):
+            data["search_context"] = DEFAULT_MEMORY["search_context"].copy()
+        for key, value in DEFAULT_MEMORY["search_context"].items():
+            if key not in data["search_context"]:
+                data["search_context"][key] = value
         return data
     if not MEMORY_FILE.exists():
         save_memory(DEFAULT_MEMORY)
@@ -51,6 +59,11 @@ def load_memory():
     for key, value in DEFAULT_MEMORY.items():
         if key not in data:
             data[key] = value
+    if not isinstance(data.get("search_context"), dict):
+        data["search_context"] = DEFAULT_MEMORY["search_context"].copy()
+    for key, value in DEFAULT_MEMORY["search_context"].items():
+        if key not in data["search_context"]:
+            data["search_context"][key] = value
 
     return data
 
@@ -136,6 +149,8 @@ def add_search_history(
     *,
     run_id,
     target_industry,
+    company="",
+    job_level="",
     location,
     pages,
     status,
@@ -154,6 +169,8 @@ def add_search_history(
         "id": make_id("search"),
         "run_id": run_id,
         "target_industry": target_industry,
+        "company": company,
+        "job_level": job_level,
         "location": location,
         "pages": int(pages),
         "status": status,
@@ -172,6 +189,19 @@ def add_search_history(
     save_memory(memory)
 
     return item
+
+
+def get_last_target_industry() -> str:
+    memory = load_memory()
+    return str(memory.get("search_context", {}).get("last_target_industry", "") or "").strip()
+
+
+def set_last_target_industry(target_industry: str) -> str:
+    memory = load_memory()
+    industry = str(target_industry or "").strip()
+    memory["search_context"]["last_target_industry"] = industry
+    save_memory(memory)
+    return industry
 
 
 def delete_memory_item(memory_id):
@@ -227,8 +257,13 @@ def memory_as_text():
         cancelled_text = "yes" if item.get("cancelled") else "no"
         report_name = item.get("report_name") or item.get("report_path") or ""
         assistant_message = item.get("assistant_message") or ""
+        company = item.get("company", "")
+        job_level = item.get("job_level", "")
         summary = (
-            f"- [{item['id']}] {item.get('target_industry', '')} in {item.get('location', '')} "
+            f"- [{item['id']}] {item.get('target_industry', '')}"
+            f"{f' @ {company}' if company else ''}"
+            f"{f' [{job_level}]' if job_level else ''}"
+            f" in {item.get('location', '')} "
             f"pages={item.get('pages', 1)} status={item.get('status', '')} "
             f"scraped={item.get('scraped_count', 0)} fresh={item.get('fresh_count', 0)} "
             f"scored={item.get('scored_count', 0)} cancelled={cancelled_text}"
@@ -238,5 +273,9 @@ def memory_as_text():
         if assistant_message:
             summary += f" note={assistant_message}"
         sections.append(summary)
+
+    last_target_industry = str(memory.get("search_context", {}).get("last_target_industry", "") or "").strip()
+    if last_target_industry:
+        sections.append(f"\nSearch context:\n- Last target industry: {last_target_industry}")
 
     return "\n".join(sections)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -51,6 +52,67 @@ from backend.schemas import EmailLatestRequest, FeedbackRequest, PreferencesRequ
 
 app = FastAPI(title="Job Hunting Agent API", version="0.1.0")
 CHAT_AGENT = create_job_agent()
+
+TARGET_INDUSTRY_PATTERNS = [
+    ("software engineer", ["software engineer", "software engineering"]),
+    ("frontend", ["frontend", "front end"]),
+    ("backend", ["backend", "back end"]),
+    ("cybersecurity", ["cybersecurity", "cyber security", "security engineer", "security"]),
+    ("data scientist", ["data scientist", "data science", "machine learning", "ml engineer"]),
+    ("data analyst", ["data analyst", "analytics analyst"]),
+    ("devops", ["devops", "sre", "site reliability", "platform engineer"]),
+    ("product manager", ["product manager", "product management"]),
+    ("qa engineer", ["qa engineer", "quality assurance", "test engineer"]),
+    ("mobile developer", ["mobile developer", "mobile development", "ios", "android"]),
+]
+
+JOB_LEVEL_PATTERNS = [
+    ("junior", ["junior", "entry level", "entry-level", "jr", "new grad", "graduate"]),
+    ("intermediate", ["intermediate", "mid level", "mid-level", "mid"]),
+    ("senior", ["senior", "lead", "staff", "principal", "sr"]),
+]
+
+
+def _extract_search_hints(message: str) -> dict[str, str]:
+    text = str(message or "")
+    lower = text.lower()
+
+    target_industry = ""
+    for canonical, variants in TARGET_INDUSTRY_PATTERNS:
+        if any(variant in lower for variant in variants):
+            target_industry = canonical
+            break
+
+    job_level = ""
+    for canonical, variants in JOB_LEVEL_PATTERNS:
+        if any(re.search(rf"\b{re.escape(variant)}\b", lower) for variant in variants):
+            job_level = canonical
+            break
+
+    company = ""
+    company_match = re.search(
+        r"\b(?:at|for|with)\s+([A-Z][A-Za-z0-9&'\-]*(?:\s+[A-Z][A-Za-z0-9&'\-]*){0,3})",
+        text,
+    )
+    if company_match:
+        candidate = company_match.group(1).strip(" ,.;:!?")
+        if candidate.lower() not in {"startups", "startup", "remote", "united states"}:
+            company = candidate
+
+    location = ""
+    if re.search(r"\bremote\b", lower):
+        location = "Remote, United States"
+
+    hints: dict[str, str] = {}
+    if target_industry:
+        hints["target_industry"] = target_industry
+    if company:
+        hints["company"] = company
+    if job_level:
+        hints["job_level"] = job_level
+    if location:
+        hints["location"] = location
+    return hints
 
 app.add_middleware(
     CORSMiddleware,
@@ -256,6 +318,21 @@ def chat(payload: ChatRequest) -> dict:
                     "content": f"Active resume already selected in the UI: {payload.resume_display_name}. Do not ask the user to upload a resume before searching.",
                 }
             ] + conversation
+        search_hints = _extract_search_hints(user_message)
+        if search_hints:
+            hint_bits = [f"{key}={value}" for key, value in search_hints.items()]
+            conversation.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Parsed search hints from the latest user message: "
+                        + "; ".join(hint_bits)
+                        + ". Treat any non-empty hint as authoritative for the search tool call. "
+                        "Do not reuse remembered search fields when the user explicitly provided a value. "
+                        "Do not ask the user to choose between the latest explicit target industry and any remembered one."
+                    ),
+                }
+            )
         conversation.append({"role": "user", "content": user_message})
         result = CHAT_AGENT.invoke({"messages": conversation})
         messages = result.get("messages", [])

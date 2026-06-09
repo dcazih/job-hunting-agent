@@ -50,13 +50,13 @@ const DEFAULT_SCHEDULE = {
     sat: false,
     sun: false,
   },
-  keywords: "software engineer",
+  keywords: "",
   location: "United States",
   pages: 1,
   email_to: "",
 };
 const INTRO_SEARCH_SUGGESTIONS = [
-  "Search for software engineering jobs in California",
+  "Search for jobs in California",
   "Look for mobile development jobs at Google",
   "Find product design roles in New York",
   "Search for data analyst jobs in Chicago",
@@ -136,7 +136,9 @@ function setViewportHeightVariable() {
     return;
   }
   const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const layoutViewportHeight = window.innerHeight;
   document.documentElement.style.setProperty("--vh", `${viewportHeight * 0.01}px`);
+  document.documentElement.style.setProperty("--app-vh", `${layoutViewportHeight * 0.01}px`);
 }
 
 const WEEKDAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -729,9 +731,11 @@ export default function App() {
   const mobileSidebarCloseTimerRef = useRef(null);
   const searchSummaryHoldUntilRef = useRef(0);
   const searchRunIdRef = useRef("");
+  const searchFetchJobKeyRef = useRef("");
+  const searchFetchJobSinceRef = useRef(0);
   const bottomTextareaHeightRef = useRef(0);
   const touchPressedButtonRef = useRef(null);
-  const searchStatusKey = `${searchDisplay.headline}||${searchDisplay.shimmer ? "1" : "0"}`;
+  const searchStatusKey = `${searchDisplay.headline}||${searchDisplay.subline}||${searchDisplay.shimmer ? "1" : "0"}`;
 
   function clearTouchPressedButton() {
     touchPressedButtonRef.current?.classList.remove("touch-pressed");
@@ -900,6 +904,8 @@ export default function App() {
     if (!busy) {
       searchSummaryHoldUntilRef.current = 0;
       searchRunIdRef.current = "";
+      searchFetchJobKeyRef.current = "";
+      searchFetchJobSinceRef.current = 0;
       setSearchStatusVisible(false);
       setSearchDisplay({
         headline: "",
@@ -922,6 +928,7 @@ export default function App() {
       const scoringTotal = Number(result.scoring_total || 0) || 0;
       const currentTitle = String(result.current_job_title || "").trim();
       const currentCompany = String(result.current_job_company || "").trim();
+      const currentJobKey = currentTitle || currentCompany ? `${currentTitle}||${currentCompany}` : "";
       const hasReportData = Boolean(
         result.report_path
         || result.report
@@ -932,12 +939,30 @@ export default function App() {
       if (runId && searchRunIdRef.current !== runId) {
         searchRunIdRef.current = runId;
         searchSummaryHoldUntilRef.current = 0;
+        searchFetchJobKeyRef.current = "";
+        searchFetchJobSinceRef.current = 0;
       }
 
       if (step.includes("fetch") || phase === "fetching") {
+        const now = Date.now();
+        if (currentJobKey) {
+          if (searchFetchJobKeyRef.current !== currentJobKey) {
+            searchFetchJobKeyRef.current = currentJobKey;
+            searchFetchJobSinceRef.current = now;
+          }
+        } else {
+          searchFetchJobKeyRef.current = "";
+          searchFetchJobSinceRef.current = 0;
+        }
+
+        const jobAge = currentJobKey ? now - searchFetchJobSinceRef.current : 0;
+        const showJobLabel = Boolean(currentJobKey) && jobAge <= 7000;
+
         return {
           headline: "Hunting for Jobs...",
-          subline: currentTitle ? (currentCompany ? `${currentTitle} at ${currentCompany}` : currentTitle) : "Fetching jobs...",
+          subline: showJobLabel
+            ? (currentCompany ? `Fetching ${currentTitle} at ${currentCompany}` : `Fetching ${currentTitle}`)
+            : "Fetching jobs...",
           shimmer: true,
         };
       }
@@ -1540,6 +1565,10 @@ export default function App() {
     const hasDayEnabled = Object.values(scheduleForm.days).some(Boolean);
     if (!hasDayEnabled && scheduleForm.enabled) {
       appendText("Enable at least one day for the scheduler.");
+      return;
+    }
+    if (scheduleForm.enabled && !String(scheduleForm.keywords || "").trim()) {
+      appendText("Enter a search query for the scheduler.");
       return;
     }
     const trimmedScheduleEmail = scheduleForm.email_to.trim();
@@ -2373,7 +2402,7 @@ export default function App() {
         {introMode && (
           <div className={`intro-shell ${introFadingOut ? "fade-out" : ""} ${returningToIntro ? "entering" : ""} ${startupReveal ? "" : "startup-enter"}`}>
             <h1 className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Drop a resume. Start the hunt.</h1>
-            <p className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Describe your target industry and I will search, score, and report top matches.</p>
+            <p className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Describe the role you want and I will search, score, and report top matches.</p>
 
             <form className={`intro-composer ${startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}`} onSubmit={handleSubmit}>
               <div className={`composer-shell single-line ${resumePickerOpen ? "with-resume-strip" : ""}`}>
@@ -2773,7 +2802,7 @@ export default function App() {
                       value={scheduleForm.keywords}
                       disabled={scheduleLocked}
                       onChange={(event) => setScheduleForm((previous) => ({ ...previous, keywords: event.target.value }))}
-                      placeholder="software engineer"
+                      placeholder="Target industry"
                     />
                   </div>
 

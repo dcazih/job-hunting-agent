@@ -17,8 +17,8 @@ import pymupdf
 
 from job_tools.emailer import send_email
 from job_tools.job_scorer import score_jobs
-from job_tools.linkedin_scraper import scrape_jobs
-from job_tools.memory_store import add_job_feedback, memory_as_text
+from job_tools.memory_store import add_job_feedback, get_last_target_industry, memory_as_text, set_last_target_industry
+from job_tools.search_pipeline import collect_filtered_search_jobs, normalize_location
 from job_tools.resume_loader import (
     DEFAULT_PREFERENCES,
     DEFAULT_RESUME_PDF,
@@ -94,7 +94,7 @@ DEFAULT_SCHEDULE: dict[str, Any] = {
     "time": "09:00",
     "timezone": DEFAULT_TIMEZONE,
     "days": {day: day in {"mon", "tue", "wed", "thu", "fri"} for day in SCHEDULE_DAY_KEYS},
-    "keywords": "software engineer",
+    "keywords": "",
     "location": "United States",
     "pages": 2,
     "email_to": "",
@@ -142,6 +142,25 @@ def _normalize_time(value: Any) -> str:
     if not re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", raw):
         return DEFAULT_SCHEDULE["time"]
     return raw
+
+
+def _normalize_location(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "United States"
+
+    lower = text.lower()
+    if "remote" in lower and "united states" not in lower and "usa" not in lower and "us" not in lower:
+        return "Remote, United States"
+
+    return text
+
+
+def _resolve_target_industry(value: Any) -> str:
+    text = str(value or "").strip()
+    if text:
+        return text
+    return get_last_target_industry()
 
 
 def _normalize_schedule(payload: Any, previous: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -360,10 +379,11 @@ def _run_scheduled_search(schedule: dict[str, Any]) -> None:
     set_current_time_zone(timezone_name)
     try:
         run_id = create_search_run()
+        target_industry = _resolve_target_industry(schedule.get("keywords", DEFAULT_SCHEDULE["keywords"]))
         execute_search_run(
             run_id,
-            keywords=schedule.get("keywords", DEFAULT_SCHEDULE["keywords"]),
-            location=schedule.get("location", DEFAULT_SCHEDULE["location"]),
+            keywords=target_industry,
+            location=_normalize_location(schedule.get("location", DEFAULT_SCHEDULE["location"])),
             pages=int(schedule.get("pages", DEFAULT_SCHEDULE["pages"])),
             send_email_after=True,
             auto_email_to=str(schedule.get("email_to", "") or "").strip(),
@@ -441,7 +461,12 @@ def run_daily_schedule_cron() -> dict[str, Any]:
 
     worker = threading.Thread(target=_run_scheduled_search, args=(schedule,), daemon=True)
     worker.start()
-    return {"status": "started", "keywords": schedule.get("keywords", DEFAULT_SCHEDULE["keywords"]), "location": schedule.get("location", DEFAULT_SCHEDULE["location"]), "pages": int(schedule.get("pages", DEFAULT_SCHEDULE["pages"]))}
+    return {
+        "status": "started",
+        "keywords": schedule.get("keywords", DEFAULT_SCHEDULE["keywords"]),
+        "location": _normalize_location(schedule.get("location", DEFAULT_SCHEDULE["location"])),
+        "pages": int(schedule.get("pages", DEFAULT_SCHEDULE["pages"])),
+    }
 
 
 def _run_progress_key(run_id: str) -> str:
@@ -896,6 +921,26 @@ def execute_search_run(
     auto_email_to: str = "",
 ) -> None:
     try:
+        search_term = _resolve_target_industry(keywords)
+        if not search_term:
+            message = "Specify a target industry before searching."
+            _set_progress(
+                run_id,
+                status="failed",
+                progress=100,
+                step="Missing target industry",
+                error=message,
+                result={
+                    "phase": "failed",
+                    "status": "missing_target_industry",
+                    "message": message,
+                },
+            )
+            return
+        search_location = normalize_location(location)
+        search_company = ""
+        search_job_level = ""
+
         _guard_canceled(run_id)
         _set_progress(run_id, status="running", progress=10, step="Loading profile")
         profile = load_candidate_profile()
@@ -905,23 +950,92 @@ def execute_search_run(
         memory_text = memory_as_text()
 
         _guard_canceled(run_id)
-        _set_progress(run_id, status="running", progress=35, step="Scraping jobs")
-        jobs = scrape_jobs(
-            keywords=keywords,
-            location=location,
-            pages=pages,
+        _set_progress(run_id, status="running", progress=35, step="Fetching jobs")
+        search_result = collect_filtered_search_jobs(
+            target_industry=search_term,
+            company=search_company,
+            job_level=search_job_level,
+            location=search_location,
+            requested_pages=pages,
+            minimum_jobs=3,
+            max_pages=10,
             is_canceled=lambda: _is_canceled(run_id),
+            on_job_progress=lambda payload: _set_progress(
+                run_id,
+                status="running",
+                progress=min(50, 35 + int((payload.get("job_index", 1) / max(1, int(payload.get("page_job_count", 1)))) * 12)),
+                step="Fetching job details",
+                result={
+                    "phase": "fetching",
+                    "current_job_title": str(payload.get("job", {}).get("title", "")),
+                    "current_job_company": str(payload.get("job", {}).get("company", "")),
+                    "scraped_count": int(payload.get("job_index", 0) or 0),
+                    "page_index": int(payload.get("page_index", 0) or 0),
+                    "page_job_count": int(payload.get("page_job_count", 0) or 0),
+                    "search_keywords": str(payload.get("search_keywords", "") or ""),
+                    "location": str(payload.get("location", "") or ""),
+                },
+            ),
+            on_page_progress=lambda payload: _set_progress(
+                run_id,
+                status="running",
+                progress=min(65, 35 + int((payload.get("pages_checked", 1) / max(1, max(3, int(pages)))) * 30)),
+                step="Filtering jobs",
+                result={
+                    "phase": "fetching",
+                    "current_job_title": str(payload.get("current_job_title", "") or ""),
+                    "current_job_company": str(payload.get("current_job_company", "") or ""),
+                    "scraped_count": int(payload.get("scraped_count", 0) or 0),
+                    "pages_checked": int(payload.get("pages_checked", 0) or 0),
+                    "unique_count": int(payload.get("unique_count", 0) or 0),
+                    "kept_count": int(payload.get("kept_count", 0) or 0),
+                    "duplicate_count": int(payload.get("duplicate_count", 0) or 0),
+                    "rejected_count": int(payload.get("rejected_count", 0) or 0),
+                    "seen_count": int(payload.get("seen_count", 0) or 0),
+                    "search_keywords": str(payload.get("search_keywords", "") or ""),
+                    "location": str(payload.get("location", "") or ""),
+                },
+            ),
         )
 
-        _guard_canceled(run_id)
-        _set_progress(run_id, status="running", progress=55, step="Filtering seen jobs")
-        seen = load_seen_job_ids()
-        fresh_jobs = [job for job in jobs if (job.get("job_id") or job.get("url")) not in seen]
+        jobs = search_result.jobs
+        search_keywords = search_result.search_keywords
+        search_location = search_result.location
+        search_company = search_result.company
+        search_job_level = search_result.job_level
+        found_count = search_result.scraped_count
+
+        if not jobs:
+            no_jobs_message = (
+                f"No matching jobs were found after checking {search_result.jobs_checked} jobs."
+                if search_result.no_match_timeout_triggered
+                else "No new jobs were found after filtering duplicates and mismatches."
+            )
+            _set_progress(
+                run_id,
+                status="complete",
+                progress=100,
+                step="Completed",
+                result={
+                    "phase": "complete",
+                    "scraped_count": found_count,
+                    "jobs_checked": search_result.jobs_checked,
+                    "fresh_count": 0,
+                    "scored_count": 0,
+                    "report_path": "",
+                    "report_name": "",
+                    "target_industry": search_term,
+                    "message": no_jobs_message,
+                },
+            )
+            if search_term:
+                set_last_target_industry(search_term)
+            return
 
         _guard_canceled(run_id)
         _set_progress(run_id, status="running", progress=70, step="Scoring jobs")
         scored_jobs = score_jobs(
-            jobs=fresh_jobs,
+            jobs=jobs,
             resume_text=profile["resume_text"],
             preferences_text=profile["preferences_text"] + "\n\nSaved memory:\n" + memory_text,
             is_canceled=lambda: _is_canceled(run_id),
@@ -929,7 +1043,7 @@ def execute_search_run(
 
         _guard_canceled(run_id)
         _set_progress(run_id, status="running", progress=90, step="Building report")
-        result = _build_report(scored_jobs, keywords)
+        result = _build_report(scored_jobs, search_keywords or search_term)
 
         _guard_canceled(run_id)
         save_seen_job_ids([job.get("job_id") or job.get("url") for job in scored_jobs if (job.get("job_id") or job.get("url"))])
@@ -938,13 +1052,16 @@ def execute_search_run(
         if send_email_after:
             _guard_canceled(run_id)
             _set_progress(run_id, status="running", progress=95, step="Sending email")
-            subject = f"Scheduled SWE Job Report - {_now_in_timezone().strftime('%Y-%m-%d')}"
+            subject = f"{(search_keywords or search_term).title()} Job Report - {_now_in_timezone().strftime('%Y-%m-%d')}"
             email_result = send_email(
                 subject=subject,
                 body=result.get("report", ""),
                 to_email=auto_email_to,
             )
             result["email_result"] = email_result
+
+        if search_term:
+            set_last_target_industry(search_term)
 
         _set_progress(run_id, status="complete", progress=100, step="Completed", result=result)
 

@@ -23,7 +23,7 @@ def build_search_url(keywords, location, start=0):
     """
     Builds the public LinkedIn guest jobs search URL.
 
-    keywords: job search query, e.g. "software engineer"
+    keywords: job search query, e.g. "data engineer"
     location: location string, e.g. "United States", "Albuquerque, New Mexico", "Remote"
     start: pagination offset, usually 0, 25, 50...
     """
@@ -138,9 +138,10 @@ def fetch_job_description(job_id):
 
 
 def scrape_jobs(
-    keywords="software engineering",
+    keywords="",
     location="United States",
     pages=1,
+    start_page=0,
     is_canceled=None,
     on_job_found=None,
 ):
@@ -151,7 +152,7 @@ def scrape_jobs(
 
     all_jobs = []
 
-    for page in range(pages):
+    for page in range(start_page, start_page + pages):
         if callable(is_canceled) and is_canceled():
             raise RuntimeError("Search was canceled by user.")
         start = page * 25
@@ -225,7 +226,7 @@ if __name__ == "__main__":
     import pandas as pd
 
     jobs = scrape_jobs(
-        keywords="software engineer",
+        keywords="data engineer",
         location="United States",
         pages=1,
     )

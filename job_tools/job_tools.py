@@ -13,6 +13,7 @@ from job_tools.resume_loader import (
 )
 from job_tools.linkedin_scraper import scrape_jobs
 from job_tools.job_scorer import score_jobs
+from job_tools.search_pipeline import collect_filtered_search_jobs
 from job_tools.storage import (
     load_seen_job_ids,
     save_seen_job_ids,
@@ -25,6 +26,7 @@ from job_tools.storage import (
 from job_tools.emailer import send_email
 from job_tools.memory_store import memory_as_text
 from job_tools.memory_store import add_search_history
+from job_tools.memory_store import get_last_target_industry, set_last_target_industry
 from backend.agent import (
     CHAT_AGENT_RUN_ID,
     clear_search_run_cancel,
@@ -58,6 +60,51 @@ def _now_in_current_timezone() -> datetime:
         return datetime.now(ZoneInfo(timezone_name))
     except Exception:
         return datetime.now()
+
+
+def _normalize_location(location: str) -> str:
+    text = str(location or "").strip()
+    if not text:
+        return "United States"
+
+    lower = text.lower()
+    if "remote" in lower and "united states" not in lower and "usa" not in lower and "us" not in lower:
+        return "Remote, United States"
+
+    return text
+
+
+def _resolve_target_industry(target_industry: str) -> str:
+    text = str(target_industry or "").strip()
+    if text:
+        return text
+    return get_last_target_industry()
+
+
+def _normalize_job_level(job_level: str) -> str:
+    text = str(job_level or "").strip()
+    if not text:
+        return ""
+
+    lower = text.lower()
+    if lower in {"jr", "entry", "entry level", "junior"}:
+        return "junior"
+    if lower in {"mid", "mid level", "mid-level", "intermediate"}:
+        return "intermediate"
+    if lower in {"sr", "senior", "senior level", "lead", "staff", "principal"}:
+        return "senior"
+    return text
+
+
+def _build_search_keywords(target_industry: str, company: str = "", job_level: str = "") -> str:
+    parts = [str(target_industry or "").strip()]
+    normalized_level = _normalize_job_level(job_level)
+    if normalized_level:
+        parts.append(normalized_level)
+    company_text = str(company or "").strip()
+    if company_text:
+        parts.append(company_text)
+    return " ".join(part for part in parts if part)
 
 
 def _extract_report_role(keywords: str, top_jobs: List[Dict[str, Any]]) -> str:
@@ -98,8 +145,8 @@ def _report_display_name(role: str) -> str:
     role_text = " ".join(str(role or "").split()).title()
     now = _now_in_current_timezone()
     date_text = now.strftime("%B %d, %Y").replace(" 0", " ")
-    time_text = now.strftime("%I:%M %p").lstrip("0").lower()
-    return f"{role_text} · {date_text} {time_text}"
+    time_text = f"{now.hour}:{now.strftime('%M')}"
+    return f"{role_text} · {date_text}, {time_text}"
 
 
 @tool
@@ -140,7 +187,7 @@ def refresh_resume_from_pdf() -> dict:
 
 @tool
 def scrape_linkedin_jobs_tool(
-    keywords: str = "software engineer", location: str = "United States", pages: int = 1
+    keywords: str = "", location: str = "United States", pages: int = 1
 ) -> dict:
     """
     Scrape public LinkedIn guest job results for a keyword and location.
@@ -148,11 +195,15 @@ def scrape_linkedin_jobs_tool(
     """
 
     _tool_log("scrape_linkedin_jobs_tool")
-    jobs = scrape_jobs(keywords=keywords, location=location, pages=pages)
+    search_term = str(keywords or "").strip()
+    if not search_term:
+        raise ValueError("keywords cannot be empty.")
+
+    jobs = scrape_jobs(keywords=search_term, location=_normalize_location(location), pages=pages)
 
     return {
-        "keywords": keywords,
-        "location": location,
+        "keywords": search_term,
+        "location": _normalize_location(location),
         "pages": pages,
         "count": len(jobs),
         "jobs": jobs,
@@ -216,7 +267,7 @@ def build_daily_report(scored_jobs: List[Dict[str, Any]]) -> dict:
     """
     _tool_log("build_daily_report")
 
-    target_industry = "software engineer"
+    target_industry = ""
 
     # Be robust to agent passing the full tool payload instead of only the list.
     if isinstance(scored_jobs, dict):
@@ -229,8 +280,8 @@ def build_daily_report(scored_jobs: List[Dict[str, Any]]) -> dict:
     if not isinstance(scored_jobs, list):
         scored_jobs = []
 
-    display_target_industry = target_industry.strip() or "software engineer"
-    report_role = _extract_report_role(display_target_industry, scored_jobs)
+    display_target_industry = target_industry.strip()
+    report_role = _extract_report_role(display_target_industry, scored_jobs) if display_target_industry else "Job Search"
     report_title = _report_display_name(report_role)
 
     scored_jobs = sorted(
@@ -360,7 +411,9 @@ def mark_report_complete_today() -> dict:
 
 
 def _run_search_pipeline_core(
-    target_industry: str = "software engineer",
+    target_industry: str = "",
+    company: str = "",
+    job_level: str = "",
     location: str = "United States",
     pages: int = 1,
     should_email: bool = False,
@@ -371,6 +424,33 @@ def _run_search_pipeline_core(
     try:
         if is_search_run_canceled(run_id):
             raise RuntimeError("Search was canceled by user.")
+
+        search_term = _resolve_target_industry(target_industry)
+        if not search_term:
+            message = "Specify a target industry before searching."
+            if run_id:
+                set_search_run_progress(
+                    run_id,
+                    status="failed",
+                    progress=100,
+                    step="Missing target industry",
+                    error=message,
+                    result={
+                        "phase": "failed",
+                        "status": "missing_target_industry",
+                        "message": message,
+                    },
+                )
+            return {
+                "status": "missing_target_industry",
+                "message": message,
+                "error": message,
+            }
+
+        search_location = _normalize_location(location)
+        search_company = str(company or "").strip()
+        search_job_level = _normalize_job_level(job_level)
+        search_keywords = _build_search_keywords(search_term, search_company, search_job_level)
 
         set_search_run_progress(
             run_id,
@@ -428,40 +508,83 @@ def _run_search_pipeline_core(
             }
         memory_text = memory_as_text()
 
-        search_term = str(target_industry or "").strip() or "software engineer"
-        jobs = scrape_jobs(
-            keywords=search_term,
-            location=location,
-            pages=int(max(1, min(10, pages))),
+        set_search_run_progress(
+            run_id,
+            status="running",
+            progress=20,
+            step="Fetching jobs",
+            result={
+                "phase": "fetching",
+                "current_job_title": "",
+                "current_job_company": "",
+                "scraped_count": 0,
+                "found_so_far": 0,
+            },
+        )
+
+        search_result = collect_filtered_search_jobs(
+            target_industry=search_term,
+            company=search_company,
+            job_level=search_job_level,
+            location=search_location,
+            requested_pages=pages,
+            minimum_jobs=3,
+            max_pages=10,
             is_canceled=lambda: is_search_run_canceled(run_id),
-            on_job_found=lambda **payload: set_search_run_progress(
+            on_job_progress=lambda payload: set_search_run_progress(
                 run_id,
                 status="running",
-                progress=20,
-                step="Fetching jobs",
+                progress=min(40, 20 + int((payload.get("job_index", 1) / max(1, int(payload.get("page_job_count", 1)))) * 15)),
+                step="Fetching job details",
                 result={
                     "phase": "fetching",
                     "current_job_title": str(payload.get("job", {}).get("title", "")),
                     "current_job_company": str(payload.get("job", {}).get("company", "")),
                     "scraped_count": int(payload.get("job_index", 0) or 0),
                     "page_index": int(payload.get("page_index", 0) or 0),
-                    "page_count": int(payload.get("page_count", 0) or 0),
-                    "job_index": int(payload.get("job_index", 0) or 0),
                     "page_job_count": int(payload.get("page_job_count", 0) or 0),
+                    "search_keywords": str(payload.get("search_keywords", "") or ""),
+                    "location": str(payload.get("location", "") or ""),
+                },
+            ),
+            on_page_progress=lambda payload: set_search_run_progress(
+                run_id,
+                status="running",
+                progress=min(65, 20 + int((payload.get("pages_checked", 1) / max(1, max(3, int(pages)))) * 35)),
+                step="Filtering jobs",
+                result={
+                    "phase": "fetching",
+                    "current_job_title": str(payload.get("current_job_title", "") or ""),
+                    "current_job_company": str(payload.get("current_job_company", "") or ""),
+                    "scraped_count": int(payload.get("scraped_count", 0) or 0),
+                    "pages_checked": int(payload.get("pages_checked", 0) or 0),
+                    "page_index": int(payload.get("page_index", 0) or 0),
+                    "unique_count": int(payload.get("unique_count", 0) or 0),
+                    "kept_count": int(payload.get("kept_count", 0) or 0),
+                    "duplicate_count": int(payload.get("duplicate_count", 0) or 0),
+                    "rejected_count": int(payload.get("rejected_count", 0) or 0),
+                    "seen_count": int(payload.get("seen_count", 0) or 0),
+                    "search_keywords": str(payload.get("search_keywords", "") or ""),
+                    "location": str(payload.get("location", "") or ""),
                 },
             ),
         )
         if is_search_run_canceled(run_id):
             raise RuntimeError("Search was canceled by user.")
 
-        seen = load_seen_job_ids()
-        fresh_jobs = [
-            job for job in jobs if (job.get("job_id") or job.get("url")) not in seen
-        ]
+        jobs = search_result.jobs
+        found_count = search_result.scraped_count
+        search_keywords = search_result.search_keywords
+        search_location = search_result.location
+        search_company = search_result.company
+        search_job_level = search_result.job_level
 
-        found_count = len(jobs)
-
-        if not fresh_jobs:
+        if not jobs:
+            no_jobs_message = (
+                f"No matching jobs were found after checking {search_result.jobs_checked} jobs."
+                if search_result.no_match_timeout_triggered
+                else "No new jobs were found after filtering duplicates and mismatches."
+            )
             set_search_run_progress(
                 run_id,
                 status="complete",
@@ -470,6 +593,7 @@ def _run_search_pipeline_core(
                 result={
                     "phase": "complete",
                     "scraped_count": found_count,
+                    "jobs_checked": search_result.jobs_checked,
                     "fresh_count": 0,
                     "scored_count": 0,
                     "report_path": "",
@@ -480,10 +604,12 @@ def _run_search_pipeline_core(
             return {
                 "status": "no_new_jobs",
                 "target_industry": search_term,
-                "keywords": search_term,
-                "location": location,
+                "keywords": search_keywords,
+                "company": search_company,
+                "job_level": search_job_level,
+                "location": search_location,
                 "pages": int(max(1, min(10, pages))),
-                "scraped_count": len(jobs),
+                "scraped_count": found_count,
                 "fresh_count": 0,
                 "scored_count": 0,
                 "report_path": "",
@@ -492,14 +618,14 @@ def _run_search_pipeline_core(
                 "top_jobs": [],
                 "remaining_jobs": [],
                 "email_result": None,
-                "assistant_message": "No new jobs were found. All matching jobs on the selected pages have already been seen.",
+                "assistant_message": no_jobs_message,
             }
 
         set_search_run_progress(
             run_id, status="running", progress=70, step="Scoring jobs"
         )
         scored_jobs = score_jobs(
-            jobs=fresh_jobs,
+            jobs=jobs,
             resume_text=resume_text,
             preferences_text=preferences_text + "\n\nSaved memory:\n" + memory_text,
             is_canceled=lambda: is_search_run_canceled(run_id),
@@ -525,7 +651,11 @@ def _run_search_pipeline_core(
             run_id, status="running", progress=90, step="Building report"
         )
         report_payload = build_daily_report.func(  # type: ignore[attr-defined]
-            scored_jobs={"scored_jobs": scored_jobs, "target_industry": search_term}
+            scored_jobs={
+                "scored_jobs": scored_jobs,
+                "target_industry": search_term,
+                "keywords": search_keywords,
+            }
         )
 
         job_ids = []
@@ -549,11 +679,13 @@ def _run_search_pipeline_core(
         return {
             "status": "complete",
             "target_industry": search_term,
-            "keywords": search_term,
-            "location": location,
+            "keywords": search_keywords,
+            "company": search_company,
+            "job_level": search_job_level,
+            "location": search_location,
             "pages": int(max(1, min(10, pages))),
-            "scraped_count": len(jobs),
-            "fresh_count": len(fresh_jobs),
+            "scraped_count": found_count,
+            "fresh_count": len(jobs),
             "scored_count": len(scored_jobs),
             "report_path": report_payload.get("report_path"),
             "report_name": report_payload.get("report_name"),
@@ -568,7 +700,9 @@ def _run_search_pipeline_core(
 
 @tool
 def run_search_pipeline(
-    target_industry: str = "software engineer",
+    target_industry: str = "",
+    company: str = "",
+    job_level: str = "",
     location: str = "United States",
     pages: int = 1,
     should_email: bool = False,
@@ -601,13 +735,37 @@ def run_search_pipeline(
             "message": message,
             "error": message,
         }
+    resolved_target_industry = _resolve_target_industry(target_industry)
+    if not resolved_target_industry:
+        run_id = _current_chat_run_id()
+        message = "Specify a target industry before searching."
+        if run_id:
+            set_search_run_progress(
+                run_id,
+                status="failed",
+                progress=100,
+                step="Missing target industry",
+                error=message,
+                result={
+                    "phase": "failed",
+                    "status": "missing_target_industry",
+                    "message": message,
+                },
+            )
+        return {
+            "status": "missing_target_industry",
+            "message": message,
+            "error": message,
+        }
     run_id = _current_chat_run_id()
     status = "failed"
     result: dict = {}
     cancelled = False
     try:
         result = _run_search_pipeline_core(
-            target_industry=target_industry,
+            target_industry=resolved_target_industry,
+            company=company,
+            job_level=job_level,
             location=location,
             pages=pages,
             should_email=should_email,
@@ -624,8 +782,10 @@ def run_search_pipeline(
             try:
                 add_search_history(
                     run_id=run_id,
-                    target_industry=target_industry,
-                    location=location,
+                    target_industry=resolved_target_industry,
+                    company=str(company or "").strip(),
+                    job_level=_normalize_job_level(job_level),
+                    location=_normalize_location(location),
                     pages=pages,
                     status=status,
                     scraped_count=int(result.get("scraped_count", 0) or 0),
@@ -638,6 +798,8 @@ def run_search_pipeline(
                 )
             except Exception:
                 pass
+        if status in {"complete", "no_new_jobs"} and resolved_target_industry:
+            set_last_target_industry(resolved_target_industry)
 
 
 @tool
@@ -859,7 +1021,9 @@ def set_chat_search_running_state(
 
 @tool
 def run_search_report_and_email(
-    keywords: str = "software engineer",
+    keywords: str = "",
+    company: str = "",
+    job_level: str = "",
     location: str = "United States",
     pages: int = 1,
     to_email: str = "",
@@ -871,6 +1035,8 @@ def run_search_report_and_email(
     _tool_log("run_search_report_and_email")
     return _run_search_pipeline_core(
         target_industry=keywords,
+        company=company,
+        job_level=job_level,
         location=location,
         pages=pages,
         to_email=to_email,

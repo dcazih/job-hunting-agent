@@ -1617,6 +1617,10 @@ svg,
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  position: sticky;
+  top: 0.75rem;
+  z-index: 2;
+  align-self: flex-start;
 }
 
 .report-panel-header button svg {
@@ -1634,6 +1638,8 @@ svg,
 .report-panel-header .report-title {
   font-size: 1.1rem;
   font-weight: 600;
+  display: inline-block;
+  padding-top: 1rem;
 }
 
 .report-panel-header .report-label {
@@ -2388,7 +2394,7 @@ label[for="profile-preferences"] {
     display: flex;
     flex-direction: column;
     width: 100%;
-    height: calc(var(--vh, 1vh) * 100);
+    height: calc(var(--app-vh, 1vh) * 100);
     overflow: hidden;
   }
 
@@ -2448,7 +2454,7 @@ label[for="profile-preferences"] {
     top: 0;
     left: 0;
     width: min(84vw, 320px);
-    height: calc(var(--vh, 1vh) * 100);
+    height: calc(var(--app-vh, 1vh) * 100);
     z-index: 4300;
     transform: translateX(-102%);
     transition: transform 220ms ease;
@@ -2582,11 +2588,8 @@ label[for="profile-preferences"] {
   }
 
   .email-modal-send {
-    width: 40px;
-    min-width: 40px;
-    height: 20px;
+    height: 40px;
     padding: 0;
-    aspect-ratio: 1 / 1;
   }
 
   .schedule-top-grid {

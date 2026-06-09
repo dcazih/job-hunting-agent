@@ -41,7 +41,7 @@ class ScheduleRequest(BaseModel):
             "sun": False,
         }
     )
-    keywords: str = "software engineer"
+    keywords: str = ""
     location: str = "United States"
     pages: int = Field(default=1, ge=1, le=10)
     email_to: str = ""

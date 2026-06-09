@@ -1,0 +1,360 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
+
+from job_tools.linkedin_scraper import scrape_jobs
+from job_tools.storage import load_seen_job_ids
+
+load_dotenv()
+
+
+class JobRelevanceDecision(BaseModel):
+    keep: bool
+    reason: str = ""
+
+
+@dataclass
+class SearchFilterResult:
+    jobs: list[dict[str, Any]]
+    search_keywords: str
+    location: str
+    target_industry: str
+    company: str
+    job_level: str
+    pages_checked: int
+    jobs_checked: int
+    scraped_count: int
+    duplicate_count: int
+    rejected_count: int
+    seen_count: int
+    no_match_timeout_triggered: bool
+
+
+def normalize_location(location: str) -> str:
+    text = str(location or "").strip()
+    if not text:
+        return "United States"
+
+    lower = text.lower()
+    if "remote" in lower and "united states" not in lower and "usa" not in lower and "us" not in lower:
+        return "Remote, United States"
+
+    return text
+
+
+def normalize_job_level(job_level: str) -> str:
+    text = str(job_level or "").strip()
+    if not text:
+        return ""
+
+    lower = text.lower()
+    if lower in {"jr", "entry", "entry level", "junior"}:
+        return "junior"
+    if lower in {"mid", "mid level", "mid-level", "intermediate"}:
+        return "intermediate"
+    if lower in {"sr", "senior", "senior level", "lead", "staff", "principal"}:
+        return "senior"
+    return text
+
+
+def build_search_keywords(target_industry: str, company: str = "", job_level: str = "") -> str:
+    parts = [str(target_industry or "").strip()]
+    normalized_level = normalize_job_level(job_level)
+    if normalized_level:
+        parts.append(normalized_level)
+    company_text = str(company or "").strip()
+    if company_text:
+        parts.append(company_text)
+    return " ".join(part for part in parts if part)
+
+
+def _dedupe_key(job: dict[str, Any]) -> str:
+    job_id = str(job.get("job_id") or "").strip()
+    if job_id:
+        return f"id:{job_id}"
+
+    url = str(job.get("url") or "").strip()
+    if url:
+        return f"url:{url}"
+
+    title = " ".join(str(job.get("title") or "").lower().split())
+    company = " ".join(str(job.get("company") or "").lower().split())
+    location = " ".join(str(job.get("location") or "").lower().split())
+    return f"fallback:{title}|{company}|{location}"
+
+
+def dedupe_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique_jobs: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+
+    for job in jobs:
+        key = _dedupe_key(job)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique_jobs.append(job)
+
+    return unique_jobs
+
+
+def _get_relevance_model():
+    model_name = os.getenv("AGENT_MODEL", "openai:gpt-4.1-mini")
+    return ChatOpenAI(
+        model=model_name.replace("openai:", ""),
+        temperature=0,
+    ).with_structured_output(JobRelevanceDecision)
+
+
+def _job_text(job: dict[str, Any]) -> str:
+    description = str(job.get("description", "") or "")
+    if len(description) > 5000:
+        description = description[:5000] + "\n\n[TRUNCATED]"
+    return description
+
+
+def _should_keep_job(
+    job: dict[str, Any],
+    *,
+    target_industry: str,
+    company: str,
+    job_level: str,
+    location: str,
+) -> JobRelevanceDecision:
+    model = _get_relevance_model()
+    prompt = f"""
+You are a strict job search filter.
+
+Keep the job only if it clearly matches the user's request. Be conservative.
+
+User request:
+- target industry: {target_industry or "unspecified"}
+- company: {company or "unspecified"}
+- job level: {job_level or "unspecified"}
+- location: {location or "United States"}
+
+Rules:
+- If company is specified, keep only jobs at that company or clearly for that employer.
+- If job level is specified, keep only jobs that match that seniority.
+- If the location is Remote or United States, keep remote jobs in the USA and jobs that explicitly fit that location.
+- If the job is unrelated, clearly senior when junior was requested, or otherwise does not fit, discard it.
+- If unsure, discard it.
+
+Job:
+Title: {job.get("title")}
+Company: {job.get("company")}
+Location: {job.get("location")}
+Listed at: {job.get("listed_at")}
+URL: {job.get("url")}
+
+Description:
+{_job_text(job)}
+"""
+    return model.invoke(prompt)
+
+
+def filter_jobs_against_request(
+    jobs: list[dict[str, Any]],
+    *,
+    target_industry: str,
+    company: str = "",
+    job_level: str = "",
+    location: str = "United States",
+    is_canceled: Callable[[], bool] | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    kept_jobs: list[dict[str, Any]] = []
+    rejected_count = 0
+    normalized_location = normalize_location(location)
+    normalized_company = str(company or "").strip()
+    normalized_level = normalize_job_level(job_level)
+
+    for job in jobs:
+        if callable(is_canceled) and is_canceled():
+            raise RuntimeError("Search was canceled by user.")
+
+        decision = _should_keep_job(
+            job,
+            target_industry=target_industry,
+            company=normalized_company,
+            job_level=normalized_level,
+            location=normalized_location,
+        )
+
+        if decision.keep:
+            kept_jobs.append(job)
+        else:
+            rejected_count += 1
+
+    return kept_jobs, rejected_count
+
+
+def collect_filtered_search_jobs(
+    *,
+    target_industry: str,
+    company: str = "",
+    job_level: str = "",
+    location: str = "United States",
+    requested_pages: int = 1,
+    minimum_jobs: int = 3,
+    max_pages: int = 10,
+    no_match_job_limit: int = 20,
+    is_canceled: Callable[[], bool] | None = None,
+    on_job_progress: Callable[[dict[str, Any]], None] | None = None,
+    on_page_progress: Callable[[dict[str, Any]], None] | None = None,
+) -> SearchFilterResult:
+    normalized_location = normalize_location(location)
+    normalized_company = str(company or "").strip()
+    normalized_level = normalize_job_level(job_level)
+    search_keywords = build_search_keywords(target_industry, normalized_company, normalized_level)
+    seen_ids = set(load_seen_job_ids())
+    collected_jobs: list[dict[str, Any]] = []
+    pages_checked = 0
+    jobs_checked = 0
+    duplicate_count = 0
+    rejected_count = 0
+    seen_count = 0
+    requested_pages = max(1, int(requested_pages or 1))
+    max_pages = max(requested_pages, minimum_jobs, int(max_pages or 1))
+    no_match_job_limit = max(1, int(no_match_job_limit or 1))
+
+    for page_index in range(max_pages):
+        if callable(is_canceled) and is_canceled():
+            raise RuntimeError("Search was canceled by user.")
+
+        current_job_snapshot: dict[str, Any] = {}
+        page_jobs = scrape_jobs(
+            keywords=search_keywords,
+            location=normalized_location,
+            pages=1,
+            start_page=page_index,
+            is_canceled=is_canceled,
+            on_job_found=lambda **payload: on_job_progress(
+                {
+                    "page_index": int(payload.get("page_index", 0) or 0),
+                    "page_count": int(payload.get("page_count", 0) or 0),
+                    "job_index": int(payload.get("job_index", 0) or 0),
+                    "page_job_count": int(payload.get("page_job_count", 0) or 0),
+                    "job": dict(payload.get("job", {}) or {}),
+                    "search_keywords": search_keywords,
+                    "location": normalized_location,
+                }
+            )
+            if callable(on_job_progress)
+            else None,
+        )
+        if callable(on_job_progress):
+            for job in page_jobs[-1:]:
+                current_job_snapshot = {"current_job_title": str(job.get("title", "") or ""), "current_job_company": str(job.get("company", "") or "")}
+        pages_checked += 1
+        collected_jobs.extend(page_jobs)
+
+        deduped_jobs = dedupe_jobs(collected_jobs)
+        duplicate_count = len(collected_jobs) - len(deduped_jobs)
+        jobs_checked = len(deduped_jobs)
+
+        filtered_jobs, page_rejected_count = filter_jobs_against_request(
+            deduped_jobs,
+            target_industry=target_industry,
+            company=normalized_company,
+            job_level=normalized_level,
+            location=normalized_location,
+            is_canceled=is_canceled,
+        )
+        rejected_count = page_rejected_count
+
+        fresh_jobs = []
+        seen_count = 0
+        for job in filtered_jobs:
+            job_key = str(job.get("job_id") or job.get("url") or "").strip()
+            if job_key and job_key in seen_ids:
+                seen_count += 1
+                continue
+            fresh_jobs.append(job)
+
+        if callable(on_page_progress):
+            on_page_progress(
+                {
+                    "page_index": page_index + 1,
+                    "pages_checked": pages_checked,
+                    "scraped_count": len(collected_jobs),
+                    "unique_count": len(deduped_jobs),
+                    "kept_count": len(fresh_jobs),
+                    "duplicate_count": duplicate_count,
+                    "rejected_count": rejected_count,
+                    "seen_count": seen_count,
+                    "current_job_title": str(current_job_snapshot.get("current_job_title", "") or ""),
+                    "current_job_company": str(current_job_snapshot.get("current_job_company", "") or ""),
+                    "search_keywords": search_keywords,
+                    "location": normalized_location,
+                }
+            )
+
+        if len(fresh_jobs) >= minimum_jobs:
+            return SearchFilterResult(
+                jobs=fresh_jobs,
+                search_keywords=search_keywords,
+                location=normalized_location,
+                target_industry=target_industry,
+                company=normalized_company,
+                job_level=normalized_level,
+                pages_checked=pages_checked,
+                jobs_checked=jobs_checked,
+                scraped_count=len(collected_jobs),
+                duplicate_count=duplicate_count,
+                rejected_count=rejected_count,
+                seen_count=seen_count,
+                no_match_timeout_triggered=False,
+            )
+
+        if jobs_checked >= no_match_job_limit and not filtered_jobs:
+            return SearchFilterResult(
+                jobs=[],
+                search_keywords=search_keywords,
+                location=normalized_location,
+                target_industry=target_industry,
+                company=normalized_company,
+                job_level=normalized_level,
+                pages_checked=pages_checked,
+                jobs_checked=jobs_checked,
+                scraped_count=len(collected_jobs),
+                duplicate_count=duplicate_count,
+                rejected_count=rejected_count,
+                seen_count=seen_count,
+                no_match_timeout_triggered=True,
+            )
+
+    final_unique_jobs = dedupe_jobs(collected_jobs)
+    final_filtered_jobs, final_rejected_count = filter_jobs_against_request(
+        final_unique_jobs,
+        target_industry=target_industry,
+        company=normalized_company,
+        job_level=normalized_level,
+        location=normalized_location,
+        is_canceled=is_canceled,
+    )
+    final_fresh_jobs = [
+        job
+        for job in final_filtered_jobs
+        if str(job.get("job_id") or job.get("url") or "").strip() not in seen_ids
+    ]
+
+    return SearchFilterResult(
+        jobs=final_fresh_jobs,
+        search_keywords=search_keywords,
+        location=normalized_location,
+        target_industry=target_industry,
+        company=normalized_company,
+        job_level=normalized_level,
+        pages_checked=pages_checked,
+        jobs_checked=jobs_checked,
+        scraped_count=len(collected_jobs),
+        duplicate_count=duplicate_count,
+        rejected_count=final_rejected_count,
+        seen_count=seen_count,
+        no_match_timeout_triggered=jobs_checked >= no_match_job_limit and not final_filtered_jobs,
+    )
