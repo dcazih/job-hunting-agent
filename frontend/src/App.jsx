@@ -2095,7 +2095,7 @@ export default function App() {
   return (
     <>
     <main
-      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : "sidebar-open"} ${isMobileLayout ? "mobile-layout" : ""} ${isMobileLayout ? "tooltips-disabled" : sidebarAnimating ? "tooltips-disabled" : ""}`}
+      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : "sidebar-open"} ${resumePickerOpen ? "resume-picker-open" : ""} ${isMobileLayout ? "mobile-layout" : ""} ${isMobileLayout ? "tooltips-disabled" : sidebarAnimating ? "tooltips-disabled" : ""}`}
       onPointerDown={handleMobileButtonPointerDown}
       onPointerUp={clearTouchPressedButton}
       onPointerCancel={clearTouchPressedButton}
@@ -2404,6 +2404,13 @@ export default function App() {
                     value={query}
                     onChange={handleIntroTextareaChange}
                     onKeyDown={onComposerKeyDown}
+                    spellCheck={false}
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    autoComplete="off"
+                    data-gramm="false"
+                    data-gramm_editor="false"
+                    data-enable-grammarly="false"
                     rows={1}
                     placeholder={introSuggestion}
                   />
@@ -2561,6 +2568,13 @@ export default function App() {
                 value={query}
                 onChange={handleBottomTextareaChange}
                 onKeyDown={onComposerKeyDown}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                autoComplete="off"
+                data-gramm="false"
+                data-gramm_editor="false"
+                data-enable-grammarly="false"
                 rows={1}
                 placeholder="Type search query"
               />

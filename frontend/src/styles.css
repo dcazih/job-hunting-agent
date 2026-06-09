@@ -591,6 +591,11 @@ svg,
   width: 100%;
   padding-bottom: 125px;
   overflow-x: hidden;
+  transition: padding-bottom 180ms ease;
+}
+
+.app-shell.resume-picker-open .chat-content {
+  padding-bottom: calc(125px + 80px);
 }
 
 .chat-message { margin-bottom: 1.3rem; padding-bottom: 0.8rem; }
