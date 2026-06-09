@@ -127,6 +127,7 @@ def _should_keep_job(
     location: str,
 ) -> JobRelevanceDecision:
     model = _get_relevance_model()
+    print(f"LLM filtering job: {job.get('title')} at {job.get('company')}")
     prompt = f"""
 You are a strict job search filter.
 
@@ -155,7 +156,12 @@ URL: {job.get("url")}
 Description:
 {_job_text(job)}
 """
-    return model.invoke(prompt)
+    decision = model.invoke(prompt)
+    verdict = "keep" if decision.keep else "discard"
+    print(
+        f"LLM filter result: {verdict} for {job.get('title')} at {job.get('company')}"
+    )
+    return decision
 
 
 def filter_jobs_against_request(
@@ -166,6 +172,7 @@ def filter_jobs_against_request(
     job_level: str = "",
     location: str = "United States",
     is_canceled: Callable[[], bool] | None = None,
+    on_filter_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     kept_jobs: list[dict[str, Any]] = []
     rejected_count = 0
@@ -173,10 +180,21 @@ def filter_jobs_against_request(
     normalized_company = str(company or "").strip()
     normalized_level = normalize_job_level(job_level)
 
-    for job in jobs:
+    total_jobs = len(jobs)
+    for job_index, job in enumerate(jobs, start=1):
         if callable(is_canceled) and is_canceled():
             raise RuntimeError("Search was canceled by user.")
-
+        if callable(on_filter_progress):
+            on_filter_progress(
+                {
+                    "job": job,
+                    "job_index": job_index,
+                    "job_total": total_jobs,
+                    "kept_count": len(kept_jobs),
+                    "rejected_count": rejected_count,
+                }
+            )
+        print(f"Applying LLM job filter: {job.get('title')} at {job.get('company')}")
         decision = _should_keep_job(
             job,
             target_industry=target_industry,
@@ -205,6 +223,7 @@ def collect_filtered_search_jobs(
     no_match_job_limit: int = 20,
     is_canceled: Callable[[], bool] | None = None,
     on_job_progress: Callable[[dict[str, Any]], None] | None = None,
+    on_filter_progress: Callable[[dict[str, Any]], None] | None = None,
     on_page_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> SearchFilterResult:
     normalized_location = normalize_location(location)
@@ -218,6 +237,7 @@ def collect_filtered_search_jobs(
     duplicate_count = 0
     rejected_count = 0
     seen_count = 0
+    consecutive_empty_pages = 0
     requested_pages = max(1, int(requested_pages or 1))
     max_pages = max(requested_pages, minimum_jobs, int(max_pages or 1))
     no_match_job_limit = max(1, int(no_match_job_limit or 1))
@@ -253,6 +273,11 @@ def collect_filtered_search_jobs(
         pages_checked += 1
         collected_jobs.extend(page_jobs)
 
+        if page_jobs:
+            consecutive_empty_pages = 0
+        else:
+            consecutive_empty_pages += 1
+
         deduped_jobs = dedupe_jobs(collected_jobs)
         duplicate_count = len(collected_jobs) - len(deduped_jobs)
         jobs_checked = len(deduped_jobs)
@@ -264,6 +289,7 @@ def collect_filtered_search_jobs(
             job_level=normalized_level,
             location=normalized_location,
             is_canceled=is_canceled,
+            on_filter_progress=on_filter_progress,
         )
         rejected_count = page_rejected_count
 
@@ -311,6 +337,9 @@ def collect_filtered_search_jobs(
                 no_match_timeout_triggered=False,
             )
 
+        if consecutive_empty_pages >= 2:
+            break
+
         if jobs_checked >= no_match_job_limit and not filtered_jobs:
             return SearchFilterResult(
                 jobs=[],
@@ -336,6 +365,7 @@ def collect_filtered_search_jobs(
         job_level=normalized_level,
         location=normalized_location,
         is_canceled=is_canceled,
+        on_filter_progress=on_filter_progress,
     )
     final_fresh_jobs = [
         job

@@ -149,6 +149,17 @@ def _report_display_name(role: str) -> str:
     return f"{role_text} · {date_text}, {time_text}"
 
 
+def _format_recommendation_label(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return {
+        "apply": "Apply",
+        "apply_today": "Apply",
+        "review": "Review",
+        "maybe": "Maybe",
+        "ignore": "Ignore",
+    }.get(normalized, str(value or "").strip().title())
+
+
 @tool
 def check_report_sent_today() -> dict:
     """Check whether today's job report has already been sent."""
@@ -303,7 +314,7 @@ def build_daily_report(scored_jobs: List[Dict[str, Any]]) -> dict:
 ## {rank_text}{job.get("title")} — {job.get("company")}
 
 **Score:** {job.get("score")}/100  
-**Recommendation:** {job.get("recommendation")}  
+**Recommendation:** {_format_recommendation_label(job.get("recommendation"))}  
 **Location:** {job.get("location")}  
 **Listed at:** {job.get("listed_at")}  
 **Link:** {job.get("url")}
@@ -547,13 +558,31 @@ def _run_search_pipeline_core(
                     "location": str(payload.get("location", "") or ""),
                 },
             ),
+            on_filter_progress=lambda payload: set_search_run_progress(
+                run_id,
+                status="running",
+                progress=40 + int(
+                    (payload.get("job_index", 0) / max(1, int(payload.get("job_total", 1))))
+                    * 25
+                ),
+                step="Filtering",
+                result={
+                    "phase": "filtering",
+                    "current_job_title": str(payload.get("job", {}).get("title", "")),
+                    "current_job_company": str(payload.get("job", {}).get("company", "")),
+                    "filtering_index": int(payload.get("job_index", 0) or 0),
+                    "filtering_total": int(payload.get("job_total", 0) or 0),
+                    "kept_count": int(payload.get("kept_count", 0) or 0),
+                    "rejected_count": int(payload.get("rejected_count", 0) or 0),
+                },
+            ),
             on_page_progress=lambda payload: set_search_run_progress(
                 run_id,
                 status="running",
                 progress=min(65, 20 + int((payload.get("pages_checked", 1) / max(1, max(3, int(pages)))) * 35)),
-                step="Filtering jobs",
+                step="Filtering",
                 result={
-                    "phase": "fetching",
+                    "phase": "filtering",
                     "current_job_title": str(payload.get("current_job_title", "") or ""),
                     "current_job_company": str(payload.get("current_job_company", "") or ""),
                     "scraped_count": int(payload.get("scraped_count", 0) or 0),
@@ -621,8 +650,17 @@ def _run_search_pipeline_core(
                 "assistant_message": no_jobs_message,
             }
 
+        fresh_count = len(jobs)
         set_search_run_progress(
-            run_id, status="running", progress=70, step="Scoring jobs"
+            run_id,
+            status="running",
+            progress=70,
+            step="Scoring jobs",
+            result={
+                "phase": "scoring",
+                "fresh_count": fresh_count,
+                "scraped_count": found_count,
+            },
         )
         scored_jobs = score_jobs(
             jobs=jobs,
@@ -640,6 +678,7 @@ def _run_search_pipeline_core(
                     "scoring_total": int(payload.get("total", 0) or 0),
                     "current_job_title": str(payload.get("job", {}).get("title", "")),
                     "current_job_company": str(payload.get("job", {}).get("company", "")),
+                    "fresh_count": fresh_count,
                     "scraped_count": found_count,
                 },
             ),
@@ -685,7 +724,7 @@ def _run_search_pipeline_core(
             "location": search_location,
             "pages": int(max(1, min(10, pages))),
             "scraped_count": found_count,
-            "fresh_count": len(jobs),
+            "fresh_count": fresh_count,
             "scored_count": len(scored_jobs),
             "report_path": report_payload.get("report_path"),
             "report_name": report_payload.get("report_name"),

@@ -1088,7 +1088,7 @@ svg,
 }
 
 .job-score-centered.tone-apply {
-  color: #4fe06f;
+  color: #39d353;
 }
 
 .job-score-centered.tone-review {
@@ -1096,11 +1096,11 @@ svg,
 }
 
 .job-score-centered.tone-ignore {
-  color: #ff6b5f;
+  color: #ff5a52;
 }
 
 .job-score-centered.tone-maybe {
-  color: #f0d24a;
+  color: #f28c28;
 }
 
 .job-card-submeta {
@@ -2034,6 +2034,16 @@ svg,
   padding: 0.58rem 0.68rem;
   outline: none;
   font-family: "SourceSans3Custom", "GeistCustom", "Inter", "Segoe UI", sans-serif;
+}
+
+.schedule-field input[type="time"] {
+  appearance: textfield;
+  -webkit-appearance: none;
+}
+
+.schedule-field input[type="time"]::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
 }
 
 .schedule-field input.invalid {

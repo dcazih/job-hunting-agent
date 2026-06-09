@@ -4,13 +4,12 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 
-
 load_dotenv()
 
 
 class JobScore(BaseModel):
     score: int = Field(ge=1, le=100)
-    recommendation: Literal["apply_today", "review", "maybe", "ignore"]
+    recommendation: Literal["apply", "review", "maybe", "ignore"]
     fit_summary: str
     match_reasons: List[str]
     concerns: List[str]
@@ -34,8 +33,7 @@ def get_scoring_model():
     model_name = os.getenv("AGENT_MODEL", "openai:gpt-4.1-mini")
 
     return ChatOpenAI(
-        model=model_name.replace("openai:", ""),
-        temperature=0
+        model=model_name.replace("openai:", ""), temperature=0
     ).with_structured_output(JobScore)
 
 
@@ -47,6 +45,7 @@ def score_single_job(job, resume_text, preferences_text):
 
     prompt = f"""
 You are a strict job-matching evaluator.
+This is a general job agent, so evaluate any role type fairly and do not assume the job is technical.
 
 Score this job from 1 to 100 based on the candidate's resume and preferences.
 If preferences are missing or vague, ignore them and score against the resume only.
@@ -54,21 +53,25 @@ If preferences are missing or vague, ignore them and score against the resume on
 Be skeptical. Do not inflate scores.
 
 Scoring guide:
-90-100 = excellent match, apply today
-80-89 = strong match, worth reviewing
-70-79 = decent match
-50-69 = weak match
-1-49 = bad match
+90-100 = excellent match, apply
+75-89 = strong match, review
+50-74 = borderline match, maybe
+0-49 = weak or bad match, ignore
 
 Penalize:
-- senior-only jobs
+- senior-only jobs when the candidate is not senior
 - staff/principal roles
-- roles requiring too many years of experience
-- pure IT support
-- sales
-- recruiting
+- roles requiring too many years of experience compared to the stated experience
+- roles that do not match the user's requested field, company, location, or level
 - unpaid work
 - unrelated jobs
+
+Reward:
+- relevant skills, certifications, or licenses
+- matching experience level
+- matching location or remote preference
+- matching industry or company when the user asked for it
+- internships or entry-level roles when the user asked for internships or entry level
 
 Candidate resume:
 {resume_text}
@@ -99,7 +102,9 @@ def score_jobs(jobs, resume_text, preferences_text, is_canceled=None, on_progres
     for index, job in enumerate(jobs, start=1):
         if callable(is_canceled) and is_canceled():
             raise RuntimeError("Search was canceled by user.")
-        print(f"Scoring {index}/{len(jobs)}: {job.get('title')} at {job.get('company')}")
+        print(
+            f"Scoring {index}/{len(jobs)}: {job.get('title')} at {job.get('company')}"
+        )
 
         try:
             score_data = score_single_job(job, resume_text, preferences_text)
@@ -114,10 +119,7 @@ def score_jobs(jobs, resume_text, preferences_text, is_canceled=None, on_progres
                 "missing_or_weak_skills": [],
             }
 
-        scored_jobs.append({
-            **job,
-            **score_data
-        })
+        scored_jobs.append({**job, **score_data})
 
         if callable(on_progress):
             on_progress(index=index, total=total, job=job, scored_job=scored_jobs[-1])

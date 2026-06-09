@@ -76,6 +76,15 @@ const INTRO_SEARCH_SUGGESTIONS = [
 ];
 const INTRO_SUGGESTION_ROTATE_MS = 15000;
 const INTRO_SUGGESTION_FADE_MS = 220;
+const FETCHING_FALLBACK_WORDS = [
+  "Rummaging",
+  "Inquiring",
+  "Sifting",
+  "Dusting for Leads",
+  "Tracking",
+  "Searching",
+  "Fetching",
+];
 
 function normalizeSchedulePagesInput(value) {
   const trimmedValue = String(value || "").trim();
@@ -96,6 +105,19 @@ function getRandomIntroSuggestion(exclude = "") {
 
   const filtered = INTRO_SEARCH_SUGGESTIONS.filter((suggestion) => suggestion !== exclude);
   const pool = filtered.length > 0 ? filtered : INTRO_SEARCH_SUGGESTIONS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function getRandomFetchingFallback(exclude = "") {
+  if (FETCHING_FALLBACK_WORDS.length === 0) {
+    return "";
+  }
+  if (FETCHING_FALLBACK_WORDS.length === 1) {
+    return FETCHING_FALLBACK_WORDS[0];
+  }
+
+  const filtered = FETCHING_FALLBACK_WORDS.filter((word) => word !== exclude);
+  const pool = filtered.length > 0 ? filtered : FETCHING_FALLBACK_WORDS;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -350,6 +372,7 @@ function JobCard({ job, isMobileLayout }) {
   const [scoreExpanded, setScoreExpanded] = useState(isMobileLayout);
   const scoreHoverTimerRef = useRef(null);
   const recommendationMap = {
+    apply: "Apply",
     apply_today: "Apply",
     review: "Review",
     maybe: "Maybe",
@@ -359,6 +382,7 @@ function JobCard({ job, isMobileLayout }) {
   const isTopScore = score === 100;
   const isExpandedScore = scoreHovered || scoreExpanded;
   const recommendationTone = ({
+    apply: "apply",
     apply_today: "apply",
     review: "review",
     maybe: "maybe",
@@ -608,26 +632,6 @@ function ResumePicker({
 
 export default function App() {
   const [sessionId, setSessionId] = useState(() => getSessionId());
-  const loadingWords = [
-    "Working",
-    "Seeking",
-    "Inquiring",
-    "Rummaging",
-    "Digging",
-    "Sniffing Around",
-    "Treasure Hunting",
-    "Sifting",
-    "Poking Around",
-    "Deep Diving",
-    "Sherlocking",
-    "Job Goblining",
-    "Opportunity Fishing",
-    "Prospecting",
-    "Scavenging",
-    "Radar Sweeping",
-    "Dusting for Leads",
-    "Chasing Leads",
-  ];
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobileLayout, setIsMobileLayout] = useState(() => typeof window !== "undefined" && window.innerWidth <= 860);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -685,6 +689,7 @@ export default function App() {
   const [pulsingResumeName, setPulsingResumeName] = useState("");
   const activeResumeName = resumeUploads.find((item) => item.is_active)?.name || "";
   const resumePickerRowRef = useRef(null);
+  const sidebarCollapsedForLayout = isMobileLayout ? false : sidebarCollapsed;
 
   function openMobileSidebar() {
     if (mobileSidebarCloseTimerRef.current) {
@@ -731,6 +736,7 @@ export default function App() {
   const mobileSidebarCloseTimerRef = useRef(null);
   const searchSummaryHoldUntilRef = useRef(0);
   const searchRunIdRef = useRef("");
+  const searchFetchFallbackRef = useRef("");
   const searchFetchJobKeyRef = useRef("");
   const searchFetchJobSinceRef = useRef(0);
   const bottomTextareaHeightRef = useRef(0);
@@ -926,6 +932,7 @@ export default function App() {
       const scrapedCount = Number(result.scraped_count || 0) || 0;
       const scoringIndex = Number(result.scoring_index || 0) || 0;
       const scoringTotal = Number(result.scoring_total || 0) || 0;
+      const freshCount = Number(result.fresh_count || result.kept_count || 0) || 0;
       const currentTitle = String(result.current_job_title || "").trim();
       const currentCompany = String(result.current_job_company || "").trim();
       const currentJobKey = currentTitle || currentCompany ? `${currentTitle}||${currentCompany}` : "";
@@ -939,6 +946,7 @@ export default function App() {
       if (runId && searchRunIdRef.current !== runId) {
         searchRunIdRef.current = runId;
         searchSummaryHoldUntilRef.current = 0;
+        searchFetchFallbackRef.current = getRandomFetchingFallback();
         searchFetchJobKeyRef.current = "";
         searchFetchJobSinceRef.current = 0;
       }
@@ -961,8 +969,16 @@ export default function App() {
         return {
           headline: "Hunting for Jobs...",
           subline: showJobLabel
-            ? (currentCompany ? `Fetching ${currentTitle} at ${currentCompany}` : `Fetching ${currentTitle}`)
-            : "Fetching jobs...",
+            ? (currentCompany ? `Found ${currentTitle} at ${currentCompany}` : `Found ${currentTitle}`)
+            : `${searchFetchFallbackRef.current || "Fetching"}...`,
+          shimmer: true,
+        };
+      }
+
+      if (step.includes("filter") || phase === "filtering") {
+        return {
+          headline: "Hunting for Jobs...",
+          subline: "Filtering...",
           shimmer: true,
         };
       }
@@ -971,7 +987,7 @@ export default function App() {
         if (!searchSummaryHoldUntilRef.current) {
           searchSummaryHoldUntilRef.current = now + 3000;
           return {
-            headline: `${scrapedCount} jobs found`,
+            headline: `${freshCount || scrapedCount} jobs found`,
             subline: "Preparing scoring...",
             shimmer: true,
           };
@@ -979,7 +995,7 @@ export default function App() {
 
         if (now < searchSummaryHoldUntilRef.current) {
           return {
-            headline: `${scrapedCount} jobs found`,
+            headline: `${freshCount || scrapedCount} jobs found`,
             subline: "Preparing scoring...",
             shimmer: true,
           };
@@ -2151,7 +2167,7 @@ export default function App() {
   return (
     <>
     <main
-      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : "sidebar-open"} ${resumePickerOpen ? "resume-picker-open" : ""} ${isMobileLayout ? "mobile-layout" : ""} ${isMobileLayout ? "tooltips-disabled" : sidebarAnimating ? "tooltips-disabled" : ""}`}
+      className={`app-shell ${sidebarCollapsedForLayout ? "sidebar-collapsed" : "sidebar-open"} ${resumePickerOpen ? "resume-picker-open" : ""} ${isMobileLayout ? "mobile-layout" : ""} ${isMobileLayout ? "tooltips-disabled" : sidebarAnimating ? "tooltips-disabled" : ""}`}
       onPointerDown={handleMobileButtonPointerDown}
       onPointerUp={clearTouchPressedButton}
       onPointerCancel={clearTouchPressedButton}
@@ -2183,7 +2199,7 @@ export default function App() {
 
       <aside className={`sidebar ${!isMobileLayout && sidebarCollapsed ? "collapsed" : ""} ${isMobileLayout ? "mobile" : ""} ${isMobileLayout && mobileSidebarOpen ? "mobile-open" : ""} ${isMobileLayout && mobileSidebarClosing ? "mobile-closing" : ""}`}>
         <div className="sidebar-top">
-            <div className="brand-box" aria-hidden={sidebarCollapsed || isMobileLayout}>
+          <div className="brand-box" aria-hidden={sidebarCollapsedForLayout || isMobileLayout}>
               <h2 className={`${startupReveal ? "app-title-fade-in" : "app-title-startup"}`}>Job-Hunting Agent</h2>
             </div>
 
@@ -2204,17 +2220,17 @@ export default function App() {
           ) : (
             <button
               className="icon-button sidebar-toggle"
-              aria-label={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
+              aria-label={sidebarCollapsedForLayout ? "Open sidebar" : "Collapse sidebar"}
               onMouseEnter={(event) => {
-                showSidebarTooltip(event, sidebarCollapsed ? "Open sidebar" : "Collapse sidebar");
-                if (sidebarCollapsed && collapsedHoverArmed) {
+                showSidebarTooltip(event, sidebarCollapsedForLayout ? "Open sidebar" : "Collapse sidebar");
+                if (sidebarCollapsedForLayout && collapsedHoverArmed) {
                   setCollapsedHoverActive(true);
                 }
               }}
-              onFocus={(event) => showSidebarTooltip(event, sidebarCollapsed ? "Open sidebar" : "Collapse sidebar")}
+              onFocus={(event) => showSidebarTooltip(event, sidebarCollapsedForLayout ? "Open sidebar" : "Collapse sidebar")}
               onMouseLeave={() => {
                 hideTooltip();
-                if (sidebarCollapsed) {
+                if (sidebarCollapsedForLayout) {
                   setCollapsedHoverActive(false);
                   setCollapsedHoverArmed(true);
                 }
@@ -2237,8 +2253,8 @@ export default function App() {
                 });
               }}
             >
-              {!sidebarCollapsed && <FontAwesomeIcon icon={faRightToBracket} rotation={180} />}
-              {sidebarCollapsed && (
+              {!sidebarCollapsedForLayout && <FontAwesomeIcon icon={faRightToBracket} rotation={180} />}
+              {sidebarCollapsedForLayout && (
                 <span className={`collapsed-toggle-icons ${collapsedHoverActive ? "hover-active" : ""}`}>
                   <FontAwesomeIcon icon={faCrosshairs} className="bullseye-icon" />
                   <FontAwesomeIcon icon={faRightToBracket} className="open-icon" />
@@ -2258,7 +2274,7 @@ export default function App() {
             onBlur={hideTooltip}
           >
             <FontAwesomeIcon icon={faPenToSquare} className="sidebar-action-icon" />
-            <span className={`profile-text sidebar-action-text ${sidebarCollapsed ? "hidden" : ""}`}>New Hunt</span>
+            <span className={`profile-text sidebar-action-text ${sidebarCollapsedForLayout ? "hidden" : ""}`}>New Hunt</span>
           </button>
           <button
             className="profile-button sidebar-action-button"
@@ -2269,7 +2285,7 @@ export default function App() {
             onBlur={hideTooltip}
           >
             <FontAwesomeIcon icon={faCalendarDays} className="sidebar-action-icon" />
-            <span className={`profile-text sidebar-action-text ${sidebarCollapsed ? "hidden" : ""}`}>Schedule</span>
+            <span className={`profile-text sidebar-action-text ${sidebarCollapsedForLayout ? "hidden" : ""}`}>Schedule</span>
           </button>
           <div ref={sidebarSearchRef} className="sidebar-search-wrap">
             <button
@@ -2282,9 +2298,9 @@ export default function App() {
             >
               <FontAwesomeIcon icon={faMagnifyingGlass} className="sidebar-action-icon" />
               {!sidebarSearchActive && (
-                <span className={`profile-text sidebar-action-text ${sidebarCollapsed ? "hidden" : ""}`}>Search</span>
+                <span className={`profile-text sidebar-action-text ${sidebarCollapsedForLayout ? "hidden" : ""}`}>Search</span>
               )}
-              {sidebarSearchActive && !sidebarCollapsed && (
+              {sidebarSearchActive && !sidebarCollapsedForLayout && (
                 <input
                   ref={sidebarSearchInputRef}
                   className="sidebar-search-input"
@@ -2298,9 +2314,9 @@ export default function App() {
           </div>
         </div>
 
-        {!sidebarCollapsed && <h3 className="report-list-title">Reports</h3>}
+        {!sidebarCollapsedForLayout && <h3 className="report-list-title">Reports</h3>}
         <div className="report-list">
-          {filteredReports.length === 0 && !sidebarCollapsed && <p className="muted">No reports found.</p>}
+          {filteredReports.length === 0 && !sidebarCollapsedForLayout && <p className="muted">No reports found.</p>}
 
           {filteredReports.map((item) => (
             <div
@@ -2313,10 +2329,10 @@ export default function App() {
                 onClick={() => loadReport(item.report_path)}
                 title={item.name}
               >
-                {sidebarCollapsed ? "•" : item.name}
+                {sidebarCollapsedForLayout ? "•" : item.name}
               </button>
 
-              {!isMobileLayout && !sidebarCollapsed && (
+              {!isMobileLayout && !sidebarCollapsedForLayout && (
                 <>
                   <button
                     className={`report-menu-trigger ${openReportMenu === item.report_path ? "active" : ""}`}
@@ -2336,7 +2352,7 @@ export default function App() {
                   )}
                 </>
               )}
-              {isMobileLayout && !sidebarCollapsed && (
+              {isMobileLayout && !sidebarCollapsedForLayout && (
                 <>
                   <button
                     className={`report-menu-trigger mobile-visible ${openReportMenu === item.report_path ? "active" : ""}`}
@@ -2367,7 +2383,7 @@ export default function App() {
             aria-label="About"
           >
             <FontAwesomeIcon icon={faCircleQuestion} className="profile-icon profile-icon-about" />
-            <span className={`profile-text profile-text-about ${sidebarCollapsed ? "hidden" : ""}`}>About</span>
+            <span className={`profile-text profile-text-about ${sidebarCollapsedForLayout ? "hidden" : ""}`}>About</span>
           </button>
         </div>
       </aside>
@@ -2401,8 +2417,8 @@ export default function App() {
         )}
         {introMode && (
           <div className={`intro-shell ${introFadingOut ? "fade-out" : ""} ${returningToIntro ? "entering" : ""} ${startupReveal ? "" : "startup-enter"}`}>
-            <h1 className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Drop a resume. Start the hunt.</h1>
-            <p className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Describe the role you want and I will search, score, and report top matches.</p>
+            <h1 className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Drop your resume. Start the hunt.</h1>
+            <p className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Describe the role you want and I will search and score Linkedin's top matches.</p>
 
             <form className={`intro-composer ${startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}`} onSubmit={handleSubmit}>
               <div className={`composer-shell single-line ${resumePickerOpen ? "with-resume-strip" : ""}`}>

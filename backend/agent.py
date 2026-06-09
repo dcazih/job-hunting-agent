@@ -786,6 +786,17 @@ def _list_md(items: list[Any]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def _recommendation_label(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return {
+        "apply": "Apply",
+        "apply_today": "Apply",
+        "review": "Review",
+        "maybe": "Maybe",
+        "ignore": "Ignore",
+    }.get(normalized, str(value or "").strip().title())
+
+
 def _job_block(job: dict[str, Any], rank: int | None = None) -> str:
     rank_text = f"#{rank} " if rank is not None else ""
 
@@ -793,7 +804,7 @@ def _job_block(job: dict[str, Any], rank: int | None = None) -> str:
 ## {rank_text}{job.get("title")} - {job.get("company")}
 
 **Score:** {job.get("score")}/100  
-**Recommendation:** {job.get("recommendation")}  
+**Recommendation:** {_recommendation_label(job.get("recommendation"))}  
 **Location:** {job.get("location")}  
 **Listed at:** {job.get("listed_at")}  
 **Link:** {job.get("url")}
@@ -873,7 +884,7 @@ def _build_report(scored_jobs: list[dict[str, Any]], keywords: str) -> dict[str,
         rest_text = "No additional jobs found."
 
     report_md = f"""
-# Daily Software Engineering Job Report - {today}
+# Daily Job Report - {today}
 
 Found and scored **{len(ordered_jobs)}** fresh jobs.
 
@@ -976,13 +987,31 @@ def execute_search_run(
                     "location": str(payload.get("location", "") or ""),
                 },
             ),
+            on_filter_progress=lambda payload: _set_progress(
+                run_id,
+                status="running",
+                progress=50 + int(
+                    (payload.get("job_index", 0) / max(1, int(payload.get("job_total", 1))))
+                    * 15
+                ),
+                step="Filtering",
+                result={
+                    "phase": "filtering",
+                    "current_job_title": str(payload.get("job", {}).get("title", "")),
+                    "current_job_company": str(payload.get("job", {}).get("company", "")),
+                    "filtering_index": int(payload.get("job_index", 0) or 0),
+                    "filtering_total": int(payload.get("job_total", 0) or 0),
+                    "kept_count": int(payload.get("kept_count", 0) or 0),
+                    "rejected_count": int(payload.get("rejected_count", 0) or 0),
+                },
+            ),
             on_page_progress=lambda payload: _set_progress(
                 run_id,
                 status="running",
                 progress=min(65, 35 + int((payload.get("pages_checked", 1) / max(1, max(3, int(pages)))) * 30)),
-                step="Filtering jobs",
+                step="Filtering",
                 result={
-                    "phase": "fetching",
+                    "phase": "filtering",
                     "current_job_title": str(payload.get("current_job_title", "") or ""),
                     "current_job_company": str(payload.get("current_job_company", "") or ""),
                     "scraped_count": int(payload.get("scraped_count", 0) or 0),
@@ -1033,7 +1062,18 @@ def execute_search_run(
             return
 
         _guard_canceled(run_id)
-        _set_progress(run_id, status="running", progress=70, step="Scoring jobs")
+        fresh_count = len(jobs)
+        _set_progress(
+            run_id,
+            status="running",
+            progress=70,
+            step="Scoring jobs",
+            result={
+                "phase": "scoring",
+                "fresh_count": fresh_count,
+                "scraped_count": found_count,
+            },
+        )
         scored_jobs = score_jobs(
             jobs=jobs,
             resume_text=profile["resume_text"],
