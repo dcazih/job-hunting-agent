@@ -379,7 +379,19 @@ Found and scored **{len(scored_jobs)}** fresh jobs.
 {rest_text}
 """.strip()
 
-    path = save_report(report, report_name=report_title)
+    path = save_report(
+        report,
+        report_name=report_title,
+        report_data={
+            "status": "complete",
+            "report_name": report_title,
+            "report_title": report_title,
+            "target_industry": display_target_industry,
+            "top_jobs": top_5,
+            "remaining_jobs": rest,
+            "job_count": len(scored_jobs),
+        },
+    )
     report_path = Path(path)
     snapshot_path = REPORTS_DIR / f"{report_path.stem}.json"
     snapshot = {

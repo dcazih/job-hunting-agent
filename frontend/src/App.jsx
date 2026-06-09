@@ -652,6 +652,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [searchDisplay, setSearchDisplay] = useState({
+    transitionKey: "idle",
     headline: "",
     subline: "",
     shimmer: false,
@@ -741,7 +742,7 @@ export default function App() {
   const searchFetchJobSinceRef = useRef(0);
   const bottomTextareaHeightRef = useRef(0);
   const touchPressedButtonRef = useRef(null);
-  const searchStatusKey = `${searchDisplay.headline}||${searchDisplay.subline}||${searchDisplay.shimmer ? "1" : "0"}`;
+  const searchStatusKey = searchDisplay.transitionKey || "idle";
 
   function clearTouchPressedButton() {
     touchPressedButtonRef.current?.classList.remove("touch-pressed");
@@ -914,6 +915,7 @@ export default function App() {
       searchFetchJobSinceRef.current = 0;
       setSearchStatusVisible(false);
       setSearchDisplay({
+        transitionKey: "idle",
         headline: "",
         subline: "",
         shimmer: false,
@@ -967,6 +969,7 @@ export default function App() {
         const showJobLabel = Boolean(currentJobKey) && jobAge <= 7000;
 
         return {
+          transitionKey: "hunting",
           headline: "Hunting for Jobs...",
           subline: showJobLabel
             ? (currentCompany ? `Found ${currentTitle} at ${currentCompany}` : `Found ${currentTitle}`)
@@ -977,6 +980,7 @@ export default function App() {
 
       if (step.includes("filter") || phase === "filtering") {
         return {
+          transitionKey: "hunting",
           headline: "Hunting for Jobs...",
           subline: "Filtering...",
           shimmer: true,
@@ -987,6 +991,7 @@ export default function App() {
         if (!searchSummaryHoldUntilRef.current) {
           searchSummaryHoldUntilRef.current = now + 3000;
           return {
+            transitionKey: "scoring-summary",
             headline: `${freshCount || scrapedCount} jobs found`,
             subline: "Preparing scoring...",
             shimmer: true,
@@ -995,6 +1000,7 @@ export default function App() {
 
         if (now < searchSummaryHoldUntilRef.current) {
           return {
+            transitionKey: "scoring-summary",
             headline: `${freshCount || scrapedCount} jobs found`,
             subline: "Preparing scoring...",
             shimmer: true,
@@ -1002,6 +1008,7 @@ export default function App() {
         }
 
         return {
+          transitionKey: "scoring",
           headline: scoringTotal ? `Scoring jobs (${scoringIndex}/${scoringTotal})` : "Scoring jobs",
           subline: currentTitle ? (currentCompany ? `${currentTitle} at ${currentCompany}` : currentTitle) : "",
           shimmer: true,
@@ -1010,6 +1017,7 @@ export default function App() {
 
       if ((step.includes("build") || phase === "building" || run?.status === "complete") && hasReportData) {
         return {
+          transitionKey: "building",
           headline: "Building Report",
           subline: "",
           shimmer: true,
@@ -1017,6 +1025,7 @@ export default function App() {
       }
 
       return {
+        transitionKey: "idle",
         headline: "",
         subline: "",
         shimmer: false,
@@ -1423,6 +1432,7 @@ export default function App() {
     searchRunIdRef.current = "";
     setSearchStatusVisible(false);
     setSearchDisplay({
+      transitionKey: "idle",
       headline: "",
       subline: "",
       shimmer: false,
@@ -2571,7 +2581,7 @@ export default function App() {
                       </div>
                     )}
                     {searchDisplay.subline && (
-                      <div className="search-progress-subline">
+                      <div key={searchDisplay.subline} className="search-progress-subline search-progress-subline-fade">
                         {searchDisplay.subline}
                       </div>
                     )}

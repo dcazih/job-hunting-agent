@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime
 import json
 import os
+import re
 from typing import Any
 from job_tools.cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
 
@@ -104,6 +105,89 @@ def _save_cloud_report_entries(entries: list[dict[str, Any]]) -> None:
         cloud_set_json(REPORT_ENTRIES_KEY, entries)
 
 
+def _markdown_field(block: str, label: str) -> str:
+    match = re.search(
+        rf"^\*\*{re.escape(label)}:\*\*\s*(.*?)(?=\n\*\*|\n---|\Z)",
+        block,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _markdown_list(block: str, label: str) -> list[str]:
+    value = _markdown_field(block, label)
+    if not value or value == "- None":
+        return []
+    return [
+        line[2:].strip()
+        for line in value.splitlines()
+        if line.strip().startswith("- ") and line[2:].strip() != "None"
+    ]
+
+
+def _parse_markdown_job_blocks(section: str) -> list[dict[str, Any]]:
+    jobs: list[dict[str, Any]] = []
+    blocks = re.split(r"(?=^##\s+)", section, flags=re.MULTILINE)
+    for block in blocks:
+        heading = re.match(
+            r"^##\s+(?:#\d+\s+)?(.+?)\s+(?:—|-)\s+(.+?)\s*$",
+            block,
+            flags=re.MULTILINE,
+        )
+        if not heading:
+            continue
+
+        score_text = _markdown_field(block, "Score").split("/", 1)[0].strip()
+        try:
+            score: int | float = float(score_text)
+            if score.is_integer():
+                score = int(score)
+        except ValueError:
+            score = 0
+
+        recommendation = (
+            _markdown_field(block, "Recommendation").strip().lower().replace(" ", "_")
+        )
+        jobs.append(
+            {
+                "title": heading.group(1).strip(),
+                "company": heading.group(2).strip(),
+                "score": score,
+                "recommendation": recommendation,
+                "location": _markdown_field(block, "Location"),
+                "listed_at": _markdown_field(block, "Listed at"),
+                "url": _markdown_field(block, "Link"),
+                "fit_summary": _markdown_field(block, "Fit summary"),
+                "match_reasons": _markdown_list(block, "Why it matches"),
+                "concerns": _markdown_list(block, "Concerns"),
+                "matched_skills": _markdown_list(block, "Matched skills"),
+                "missing_or_weak_skills": _markdown_list(block, "Missing / weak skills"),
+            }
+        )
+    return jobs
+
+
+def recover_report_jobs(
+    report_text: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    text = str(report_text or "")
+    top_match = re.search(
+        r"^# Top 5 Best Matches\s*(.*?)(?=^# Remaining Jobs\s*|\Z)",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    remaining_match = re.search(
+        r"^# Remaining Jobs\s*(.*)\Z",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    top_jobs = _parse_markdown_job_blocks(top_match.group(1)) if top_match else []
+    remaining_jobs = (
+        _parse_markdown_job_blocks(remaining_match.group(1)) if remaining_match else []
+    )
+    return top_jobs, remaining_jobs
+
+
 def _cloud_unique_report_path(base_name: str, existing_entries: list[dict[str, Any]]) -> str:
     candidate = f"{base_name}.md"
     existing_paths = {str(entry.get("report_path", "") or "") for entry in existing_entries}
@@ -189,8 +273,22 @@ def get_saved_report_entry(report_path: str) -> dict[str, Any] | None:
         return None
 
     if cloud_enabled():
-        for entry in _cloud_report_entries():
+        entries = _cloud_report_entries()
+        for index, entry in enumerate(entries):
             if str(entry.get("report_path", "") or "") == requested:
+                if not entry.get("top_jobs") and not entry.get("remaining_jobs"):
+                    top_jobs, remaining_jobs = recover_report_jobs(
+                        str(entry.get("report", "") or "")
+                    )
+                    if top_jobs or remaining_jobs:
+                        entry = {
+                            **entry,
+                            "top_jobs": top_jobs,
+                            "remaining_jobs": remaining_jobs,
+                            "job_count": len(top_jobs) + len(remaining_jobs),
+                        }
+                        entries[index] = entry
+                        _save_cloud_report_entries(entries)
                 return entry
         return None
 

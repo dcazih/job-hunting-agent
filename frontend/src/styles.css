@@ -741,6 +741,10 @@ svg,
   letter-spacing: 0.005em;
 }
 
+.search-progress-subline-fade {
+  animation: search-progress-subline-fade-in 180ms ease-out both;
+}
+
 .loading-lottie {
   width: 50x;
   height: 50px;
@@ -751,29 +755,38 @@ svg,
 
 .status-shimmer {
   display: inline-block;
-  background: linear-gradient(
+  background: repeating-linear-gradient(
     110deg,
-    #8f8f8f 0%,
-    #8f8f8f 44%,
-    #f2f2f2 50%,
-    #8f8f8f 56%,
-    #8f8f8f 100%
+    #8f8f8f 0,
+    #8f8f8f 90px,
+    #f2f2f2 120px,
+    #8f8f8f 150px,
+    #8f8f8f 240px
   );
-  background-size: 700% 100%;
-  background-position: 420% 0;
+  background-size: 240px 100%;
+  background-position: 0 0;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   will-change: background-position;
-  animation: status-shimmer-slide 15.6s linear infinite;
+  animation: status-shimmer-slide 3.5s linear infinite;
 }
 
 @keyframes status-shimmer-slide {
-  from {
-    background-position: 420% 0;
+  0% {
+    background-position: -240px 0;
   }
-  to {
-    background-position: -420% 0;
+  11.538% {
+    background-position: -200px 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-shimmer {
+    animation: none;
   }
 }
 
@@ -785,6 +798,15 @@ svg,
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes search-progress-subline-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
