@@ -1100,7 +1100,7 @@ svg,
 }
 
 .job-score-centered.tone-maybe {
-  color: #b08cff;
+  color: #f0d24a;
 }
 
 .job-card-submeta {
@@ -1532,6 +1532,7 @@ svg,
   cursor: pointer;
   transition: opacity 140ms ease;
   align-self: end;
+  transform: translateY(-1px);
 }
 
 .search-stop-button:hover {

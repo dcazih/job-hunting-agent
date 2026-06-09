@@ -709,6 +709,7 @@ export default function App() {
   const messageRefs = useRef({});
   const reportPanelRefs = useRef({});
   const chatContentRef = useRef(null);
+  const chatLayoutRef = useRef(null);
   const fileInputRef = useRef(null);
   const introTextareaRef = useRef(null);
   const bottomTextareaRef = useRef(null);
@@ -735,6 +736,13 @@ export default function App() {
   function clearTouchPressedButton() {
     touchPressedButtonRef.current?.classList.remove("touch-pressed");
     touchPressedButtonRef.current = null;
+  }
+
+  function getMobileReportScrollOffset() {
+    if (!isMobileLayout) return 16;
+    const header = document.querySelector(".mobile-header");
+    const headerHeight = header?.getBoundingClientRect().height || 58;
+    return headerHeight + 16;
   }
 
   function handleMobileButtonPointerDown(event) {
@@ -832,18 +840,37 @@ export default function App() {
       : messageRefs.current[focusRequest.id];
     if (target) {
       if (isMobileLayout && focusedMessage?.type === "report") {
-        const container = chatContentRef.current?.parentElement;
+        const container = chatLayoutRef.current;
         if (container) {
           const containerRect = container.getBoundingClientRect();
           const targetRect = target.getBoundingClientRect();
-          const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - 16;
-          container.scrollTo({ top: Math.max(0, nextTop), behavior: "auto" });
+          const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - getMobileReportScrollOffset();
+          container.scrollTo({ top: Math.max(0, nextTop), behavior: "smooth" });
         }
       } else {
         target.scrollIntoView({ behavior: "smooth", block: focusRequest.block || "end" });
       }
     }
   }, [focusRequest, messages, isMobileLayout]);
+
+  useEffect(() => {
+    if (!isMobileLayout || !selectedReportPath) return;
+
+    const targetMessage = messages.find((message) => message.type === "report" && message.report?.report_path === selectedReportPath);
+    if (!targetMessage) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const target = reportPanelRefs.current[targetMessage.id];
+      const container = chatLayoutRef.current;
+      if (!target || !container) return;
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - getMobileReportScrollOffset();
+      container.scrollTo({ top: Math.max(0, nextTop), behavior: "smooth" });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isMobileLayout, messages, selectedReportPath]);
 
   useEffect(() => {
     function updateLastChatExtraPadding() {
@@ -2316,7 +2343,7 @@ export default function App() {
         </div>
       </aside>
 
-      <section className={`chat-layout ${introMode ? "intro-scroll-locked" : ""}`} onClick={() => setOpenReportMenu("")}>
+      <section ref={chatLayoutRef} className={`chat-layout ${introMode ? "intro-scroll-locked" : ""}`} onClick={() => setOpenReportMenu("")}>
         {scheduleToastVisible && (
           <div className="schedule-save-toast" role="status" aria-live="polite">
             <span>Schedule saved</span>
