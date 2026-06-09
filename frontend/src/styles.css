@@ -168,6 +168,26 @@ svg,
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
+  scrollbar-width: thin;
+  scrollbar-color: #111111 #191919;
+}
+
+.report-list::-webkit-scrollbar {
+  width: 12px;
+}
+
+.report-list::-webkit-scrollbar-track {
+  background: #191919;
+}
+
+.report-list::-webkit-scrollbar-thumb {
+  background: #111111;
+  border-radius: 999px;
+  border: 2px solid #191919;
+}
+
+.report-list::-webkit-scrollbar-thumb:hover {
+  background: #1d1d1d;
 }
 
 .sidebar.collapsed .report-list {
@@ -896,6 +916,26 @@ svg,
   overflow-x: auto;
   padding-bottom: 0.2rem;
   background-color: #222222;
+  scrollbar-color: #191919 #222222;
+  scrollbar-width: thin;
+}
+
+.jobs-row::-webkit-scrollbar {
+  height: 10px;
+}
+
+.jobs-row::-webkit-scrollbar-track {
+  background: #222222;
+}
+
+.jobs-row::-webkit-scrollbar-thumb {
+  background: #191919;
+  border-radius: 999px;
+  border: 2px solid #222222;
+}
+
+.jobs-row::-webkit-scrollbar-thumb:hover {
+  background: #242424;
 }
 
 .jobs-row > .assistant-text {
