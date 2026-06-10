@@ -54,6 +54,14 @@ body,
   overscroll-behavior-y: none;
 }
 
+html.fonts-pending body {
+  visibility: hidden;
+}
+
+html.fonts-ready body {
+  visibility: visible;
+}
+
 body {
   margin: 0;
   background: #111111;
@@ -1550,6 +1558,10 @@ svg,
 
 .resume-toggle-button .resume-empty-icon {
   opacity: 0;
+}
+
+.resume-toggle-button .resume-empty-icon.visible {
+  opacity: 1;
 }
 
 .composer-shell {
