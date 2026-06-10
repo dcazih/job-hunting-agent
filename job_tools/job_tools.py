@@ -30,6 +30,13 @@ from job_tools.emailer import send_email
 from job_tools.memory_store import memory_as_text
 from job_tools.memory_store import add_search_history
 from job_tools.memory_store import get_last_target_industry, set_last_target_industry
+from job_tools.search_checkpoint import (
+    load_search_checkpoint,
+    mark_search_checkpoint_complete,
+    mark_search_checkpoint_interrupted,
+    start_search_checkpoint,
+    update_search_checkpoint,
+)
 from backend.agent import (
     CHAT_AGENT_RUN_ID,
     clear_search_run_cancel,
@@ -474,6 +481,7 @@ def _run_search_pipeline_core(
     pages: int = 1,
     should_email: bool = False,
     to_email: str = "",
+    resume_checkpoint: dict[str, Any] | None = None,
 ) -> dict:
     run_id = _current_chat_run_id()
 
@@ -516,6 +524,27 @@ def _run_search_pipeline_core(
             search_job_level,
             search_internship_timeframe,
         )
+        checkpoint_params = {
+            "target_industry": search_term,
+            "company": search_company,
+            "job_level": search_job_level,
+            "location": search_location,
+            "posted_within": search_posted_within,
+            "internship_timeframe": search_internship_timeframe,
+            "pages": int(max(1, min(10, pages))),
+            "should_email": bool(should_email),
+            "to_email": str(to_email or "").strip(),
+        }
+        checkpoint = (
+            dict(resume_checkpoint)
+            if isinstance(resume_checkpoint, dict)
+            else start_search_checkpoint(run_id, checkpoint_params)
+        )
+        if resume_checkpoint:
+            checkpoint["run_id"] = run_id
+            checkpoint["status"] = "active"
+            checkpoint["params"] = checkpoint_params
+            checkpoint = update_search_checkpoint(**checkpoint) or checkpoint
 
         set_search_run_progress(
             run_id,
@@ -684,6 +713,8 @@ def _run_search_pipeline_core(
                     "location": str(payload.get("location", "") or ""),
                 },
             ),
+            resume_state=checkpoint,
+            on_checkpoint=lambda payload: update_search_checkpoint(**payload),
         )
         if is_search_run_canceled(run_id):
             raise RuntimeError("Search was canceled by user.")
@@ -719,6 +750,7 @@ def _run_search_pipeline_core(
                     "target_industry": search_term,
                 },
             )
+            mark_search_checkpoint_complete()
             return {
                 "status": "no_new_jobs",
                 "target_industry": search_term,
@@ -753,12 +785,13 @@ def _run_search_pipeline_core(
                 "scraped_count": found_count,
             },
         )
-        scored_jobs = score_jobs(
-            jobs=jobs,
-            resume_text=resume_text,
-            preferences_text=preferences_text + "\n\nSaved memory:\n" + memory_text,
-            is_canceled=lambda: is_search_run_canceled(run_id),
-            on_progress=lambda **payload: set_search_run_progress(
+        def handle_score_progress(**payload: Any) -> None:
+            update_search_checkpoint(
+                phase="scoring",
+                filtered_jobs=jobs,
+                scored_jobs=list(payload.get("scored_jobs", []) or []),
+            )
+            set_search_run_progress(
                 run_id,
                 status="running",
                 progress=70
@@ -778,7 +811,16 @@ def _run_search_pipeline_core(
                     "fresh_count": fresh_count,
                     "scraped_count": found_count,
                 },
-            ),
+            )
+
+        update_search_checkpoint(phase="scoring", filtered_jobs=jobs)
+        scored_jobs = score_jobs(
+            jobs=jobs,
+            resume_text=resume_text,
+            preferences_text=preferences_text + "\n\nSaved memory:\n" + memory_text,
+            is_canceled=lambda: is_search_run_canceled(run_id),
+            on_progress=handle_score_progress,
+            initial_scored_jobs=list(checkpoint.get("scored_jobs", []) or []),
         )
         if is_search_run_canceled(run_id):
             raise RuntimeError("Search was canceled by user.")
@@ -812,6 +854,7 @@ def _run_search_pipeline_core(
         set_search_run_progress(
             run_id, status="complete", progress=100, step="Completed"
         )
+        mark_search_checkpoint_complete()
         return {
             "status": "complete",
             "target_industry": search_term,
@@ -924,6 +967,8 @@ def run_search_pipeline(
     except RuntimeError as error:
         cancelled = "Search was canceled by user." in str(error)
         status = "canceled" if cancelled else "failed"
+        if cancelled:
+            mark_search_checkpoint_interrupted(run_id)
         raise
     finally:
         if run_id:
@@ -952,6 +997,43 @@ def run_search_pipeline(
                 pass
         if status in {"complete", "no_new_jobs"} and resolved_target_industry:
             set_last_target_industry(resolved_target_industry)
+
+
+@tool
+def resume_latest_search_pipeline() -> dict:
+    """
+    Resume the latest interrupted hunt from its saved fetch, filter, and score
+    checkpoint. Use this when the user asks to resume, continue, or restart the
+    last stopped hunt.
+    """
+    _tool_log("resume_latest_search_pipeline")
+    active_resume_display_name = get_current_resume_display_name()
+    if not active_resume_display_name:
+        return {
+            "status": "missing_resume",
+            "message": "Please upload a resume before I can resume the search.",
+        }
+
+    checkpoint = load_search_checkpoint()
+    if not checkpoint or checkpoint.get("status") != "interrupted":
+        return {
+            "status": "no_interrupted_search",
+            "message": "There is no interrupted hunt to resume.",
+        }
+
+    params = dict(checkpoint.get("params", {}) or {})
+    return _run_search_pipeline_core(
+        target_industry=str(params.get("target_industry", "") or ""),
+        company=str(params.get("company", "") or ""),
+        job_level=str(params.get("job_level", "") or ""),
+        location=str(params.get("location", "United States") or "United States"),
+        posted_within=str(params.get("posted_within", "") or ""),
+        internship_timeframe=str(params.get("internship_timeframe", "") or ""),
+        pages=int(params.get("pages", 1) or 1),
+        should_email=bool(params.get("should_email", False)),
+        to_email=str(params.get("to_email", "") or ""),
+        resume_checkpoint=checkpoint,
+    )
 
 
 @tool

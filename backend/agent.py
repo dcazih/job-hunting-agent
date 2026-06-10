@@ -20,6 +20,7 @@ from job_tools.emailer import send_email
 from job_tools.job_scorer import score_jobs
 from job_tools.memory_store import add_job_feedback, get_last_target_industry, memory_as_text, set_last_target_industry
 from job_tools.search_pipeline import collect_filtered_search_jobs, normalize_location
+from job_tools.search_checkpoint import mark_search_checkpoint_interrupted
 from job_tools.resume_loader import (
     DEFAULT_PREFERENCES,
     DEFAULT_RESUME_PDF,
@@ -537,6 +538,7 @@ def _is_canceled(run_id: str) -> bool:
 
 
 def cancel_search_run(run_id: str) -> dict[str, Any]:
+    mark_search_checkpoint_interrupted(run_id)
     if cloud_enabled():
         run = cloud_get_json(_run_progress_key(run_id), None)
         if not run:

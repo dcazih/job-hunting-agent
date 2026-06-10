@@ -157,8 +157,10 @@ def scrape_jobs(
     start_page=0,
     max_jobs=None,
     posted_within_seconds=None,
+    existing_jobs=None,
     is_canceled=None,
     on_job_found=None,
+    on_job_fetched=None,
 ):
     """
     Scrapes multiple result pages.
@@ -166,6 +168,11 @@ def scrape_jobs(
     """
 
     all_jobs = []
+    existing_by_key = {
+        str(job.get("job_id") or job.get("url") or "").strip(): dict(job)
+        for job in (existing_jobs or [])
+        if str(job.get("job_id") or job.get("url") or "").strip()
+    }
 
     for page in range(start_page, start_page + pages):
         if callable(is_canceled) and is_canceled():
@@ -190,6 +197,11 @@ def scrape_jobs(
         for job_index, job in enumerate(jobs, start=1):
             if callable(is_canceled) and is_canceled():
                 raise RuntimeError("Search was canceled by user.")
+            job_key = str(job.get("job_id") or job.get("url") or "").strip()
+            existing_job = existing_by_key.get(job_key)
+            if existing_job and "description" in existing_job:
+                job.clear()
+                job.update(existing_job)
             print(f"Fetching description: {job['title']} at {job['company']}")
 
             if callable(on_job_found):
@@ -201,7 +213,17 @@ def scrape_jobs(
                     page_job_count=len(jobs),
                 )
 
-            job["description"] = fetch_job_description(job["job_id"])
+            if "description" not in job:
+                job["description"] = fetch_job_description(job["job_id"])
+
+            if callable(on_job_fetched):
+                on_job_fetched(
+                    job=job,
+                    page_index=page + 1,
+                    page_count=pages,
+                    job_index=len(all_jobs) + job_index,
+                    page_job_count=len(jobs),
+                )
 
             sleep_secs = random.uniform(0.6, 1.4) * SCRAPE_DELAY_MULTIPLIER
             if callable(is_canceled):

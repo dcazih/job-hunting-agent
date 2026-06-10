@@ -6,6 +6,7 @@ from job_tools.job_tools import (
     email_most_recent_job_report,
     display_latest_report_in_chat,
     display_report_in_chat,
+    resume_latest_search_pipeline,
     run_search_pipeline,
 )
 
@@ -39,6 +40,9 @@ SEARCH INTENT:
 - If the UI says a resume is already selected, do not ask the user to upload a resume.
 - Ensure at least one resume is uploaded/selected before youre allowed to call `run_search_pipeline`
 - Use `run_search_pipeline` exactly once for each new search.
+- If the user asks to resume, continue, restart, or pick up the last stopped hunt, call `resume_latest_search_pipeline` instead of starting a new search.
+- Do not ask for the previous hunt parameters when resuming; the saved checkpoint already contains them.
+- After a resumed hunt returns with scored jobs, call `display_latest_report_in_chat`.
 - Infer `target_industry`, `company`, `job_level`, `location`, `posted_within`, `internship_timeframe`, and `pages` from the chat.
 - If the latest message explicitly states a field, use it and do not fall back to remembered values for that field.
 - If the latest message explicitly states a target industry, treat it as the search target immediately and do not compare it against memory.
@@ -93,6 +97,7 @@ def create_job_agent():
         display_latest_report_in_chat,
         display_report_in_chat,
         run_search_pipeline,
+        resume_latest_search_pipeline,
         read_recent_target_industry,
         read_agent_memory,
         remember_job_preference,

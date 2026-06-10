@@ -271,6 +271,7 @@ def filter_jobs_against_request(
     is_canceled: Callable[[], bool] | None = None,
     should_stop: Callable[[], bool] | None = None,
     on_filter_progress: Callable[[dict[str, Any]], None] | None = None,
+    on_filter_result: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     kept_jobs: list[dict[str, Any]] = []
     rejected_count = 0
@@ -320,6 +321,14 @@ def filter_jobs_against_request(
             kept_jobs.append(job)
         else:
             rejected_count += 1
+        if callable(on_filter_result):
+            on_filter_result(
+                {
+                    "job": job,
+                    "keep": bool(decision.keep),
+                    "reason": str(decision.reason or ""),
+                }
+            )
 
     return kept_jobs, rejected_count
 
@@ -341,6 +350,8 @@ def collect_filtered_search_jobs(
     on_job_progress: Callable[[dict[str, Any]], None] | None = None,
     on_filter_progress: Callable[[dict[str, Any]], None] | None = None,
     on_page_progress: Callable[[dict[str, Any]], None] | None = None,
+    resume_state: dict[str, Any] | None = None,
+    on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> SearchFilterResult:
     normalized_location = normalize_location(location)
     normalized_company = str(company or "").strip()
@@ -357,11 +368,17 @@ def collect_filtered_search_jobs(
     )
     recency_seconds = posted_within_seconds(normalized_posted_within)
     seen_ids = set(load_seen_job_ids())
-    collected_jobs: list[dict[str, Any]] = []
+    resume_payload = dict(resume_state or {})
+    collected_jobs: list[dict[str, Any]] = dedupe_jobs(
+        list(resume_payload.get("fetched_jobs", []) or [])
+    )
     pages_checked = 0
     jobs_checked = 0
     duplicate_count = 0
-    rejected_count = 0
+    filter_decisions = dict(resume_payload.get("filter_decisions", {}) or {})
+    rejected_count = sum(
+        1 for decision in filter_decisions.values() if not bool(decision.get("keep"))
+    )
     seen_count = 0
     consecutive_empty_pages = 0
     requested_pages = max(1, int(requested_pages or 1))
@@ -374,8 +391,84 @@ def collect_filtered_search_jobs(
     )
     deadline = time.monotonic() + runtime_limit if runtime_limit > 0 else None
     runtime_limit_triggered = False
-    processed_keys: set[str] = set()
-    filtered_jobs: list[dict[str, Any]] = []
+    processed_keys: set[str] = set(filter_decisions)
+    filtered_jobs: list[dict[str, Any]] = dedupe_jobs(
+        list(resume_payload.get("filtered_jobs", []) or [])
+    )
+
+    def checkpoint(phase: str) -> None:
+        if callable(on_checkpoint):
+            on_checkpoint(
+                {
+                    "phase": phase,
+                    "fetched_jobs": dedupe_jobs(collected_jobs),
+                    "filter_decisions": dict(filter_decisions),
+                    "filtered_jobs": dedupe_jobs(filtered_jobs),
+                    "pages_checked": pages_checked,
+                }
+            )
+
+    def remember_fetched_job(payload: dict[str, Any]) -> None:
+        job = dict(payload.get("job", {}) or {})
+        key = _dedupe_key(job)
+        for index, existing in enumerate(collected_jobs):
+            if _dedupe_key(existing) == key:
+                collected_jobs[index] = job
+                break
+        else:
+            collected_jobs.append(job)
+        checkpoint("fetching")
+
+    def handle_job_found(payload: dict[str, Any]) -> None:
+        remember_fetched_job(payload)
+        if callable(on_job_progress):
+            on_job_progress(
+                {
+                    "page_index": int(payload.get("page_index", 0) or 0),
+                    "page_count": int(payload.get("page_count", 0) or 0),
+                    "job_index": int(payload.get("job_index", 0) or 0),
+                    "page_job_count": int(payload.get("page_job_count", 0) or 0),
+                    "job": dict(payload.get("job", {}) or {}),
+                    "search_keywords": search_keywords,
+                    "location": normalized_location,
+                }
+            )
+
+    def remember_filter_result(payload: dict[str, Any]) -> None:
+        job = dict(payload.get("job", {}) or {})
+        key = _dedupe_key(job)
+        filter_decisions[key] = {
+            "keep": bool(payload.get("keep")),
+            "reason": str(payload.get("reason", "") or ""),
+        }
+        if payload.get("keep"):
+            if all(_dedupe_key(existing) != key for existing in filtered_jobs):
+                filtered_jobs.append(job)
+        checkpoint("filtering")
+
+    if resume_payload.get("phase") == "scoring" and filtered_jobs:
+        fresh_jobs = [
+            job
+            for job in filtered_jobs
+            if str(job.get("job_id") or job.get("url") or "").strip() not in seen_ids
+        ]
+        return SearchFilterResult(
+            jobs=fresh_jobs,
+            search_keywords=search_keywords,
+            location=normalized_location,
+            target_industry=target_industry,
+            company=normalized_company,
+            job_level=normalized_level,
+            posted_within=normalized_posted_within,
+            internship_timeframe=normalized_internship_timeframe,
+            pages_checked=int(resume_payload.get("pages_checked", 0) or 0),
+            jobs_checked=len(collected_jobs),
+            scraped_count=len(collected_jobs),
+            duplicate_count=0,
+            rejected_count=rejected_count,
+            seen_count=len(filtered_jobs) - len(fresh_jobs),
+            no_match_timeout_triggered=False,
+        )
 
     def should_stop() -> bool:
         nonlocal runtime_limit_triggered
@@ -398,20 +491,10 @@ def collect_filtered_search_jobs(
             start_page=page_index,
             max_jobs=max(0, no_match_job_limit - jobs_checked),
             posted_within_seconds=recency_seconds,
+            existing_jobs=collected_jobs,
             is_canceled=is_canceled,
-            on_job_found=lambda **payload: on_job_progress(
-                {
-                    "page_index": int(payload.get("page_index", 0) or 0),
-                    "page_count": int(payload.get("page_count", 0) or 0),
-                    "job_index": int(payload.get("job_index", 0) or 0),
-                    "page_job_count": int(payload.get("page_job_count", 0) or 0),
-                    "job": dict(payload.get("job", {}) or {}),
-                    "search_keywords": search_keywords,
-                    "location": normalized_location,
-                }
-            )
-            if callable(on_job_progress)
-            else None,
+            on_job_found=lambda **payload: handle_job_found(payload),
+            on_job_fetched=lambda **payload: remember_fetched_job(payload),
         )
         if callable(on_job_progress):
             for job in page_jobs[-1:]:
@@ -447,9 +530,12 @@ def collect_filtered_search_jobs(
             is_canceled=is_canceled,
             should_stop=should_stop,
             on_filter_progress=on_filter_progress,
+            on_filter_result=remember_filter_result,
         )
         filtered_jobs.extend(newly_filtered_jobs)
+        filtered_jobs = dedupe_jobs(filtered_jobs)
         rejected_count += page_rejected_count
+        checkpoint("filtering")
 
         fresh_jobs = []
         seen_count = 0

@@ -106,8 +106,14 @@ def score_jobs(
     is_canceled=None,
     on_progress=None,
     max_runtime_seconds=None,
+    initial_scored_jobs=None,
 ):
-    scored_jobs = []
+    scored_jobs = [dict(job) for job in (initial_scored_jobs or [])]
+    scored_keys = {
+        str(job.get("job_id") or job.get("url") or "").strip()
+        for job in scored_jobs
+        if str(job.get("job_id") or job.get("url") or "").strip()
+    }
     total = len(jobs)
     runtime_limit = (
         float(max_runtime_seconds)
@@ -117,6 +123,9 @@ def score_jobs(
     deadline = time.monotonic() + runtime_limit if runtime_limit > 0 else None
 
     for index, job in enumerate(jobs, start=1):
+        job_key = str(job.get("job_id") or job.get("url") or "").strip()
+        if job_key and job_key in scored_keys:
+            continue
         if callable(is_canceled) and is_canceled():
             raise RuntimeError("Search was canceled by user.")
         if deadline is not None and time.monotonic() >= deadline:
@@ -140,9 +149,17 @@ def score_jobs(
             }
 
         scored_jobs.append({**job, **score_data})
+        if job_key:
+            scored_keys.add(job_key)
 
         if callable(on_progress):
-            on_progress(index=index, total=total, job=job, scored_job=scored_jobs[-1])
+            on_progress(
+                index=len(scored_jobs),
+                total=total,
+                job=job,
+                scored_job=scored_jobs[-1],
+                scored_jobs=list(scored_jobs),
+            )
 
     scored_jobs.sort(key=lambda item: item.get("score", 0), reverse=True)
 
