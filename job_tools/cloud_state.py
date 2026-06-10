@@ -41,6 +41,14 @@ def ensure_schema() -> None:
                 );
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seen_jobs (
+                  job_id TEXT PRIMARY KEY,
+                  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
         conn.commit()
 
 
@@ -73,4 +81,51 @@ def set_json(key: str, value: Any) -> None:
                 """,
                 (key, payload),
             )
+        conn.commit()
+
+
+def get_seen_job_ids() -> set[str]:
+    if not enabled():
+        return set()
+    ensure_schema()
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT job_id FROM seen_jobs")
+            return {str(row[0]) for row in cur.fetchall() if row and row[0]}
+
+
+def add_seen_job_ids(job_ids: Any) -> None:
+    if not enabled():
+        return
+    normalized = sorted(
+        {str(job_id).strip() for job_id in (job_ids or []) if str(job_id).strip()}
+    )
+    if not normalized:
+        return
+    ensure_schema()
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO seen_jobs (job_id)
+                VALUES (%s)
+                ON CONFLICT (job_id) DO NOTHING;
+                """,
+                [(job_id,) for job_id in normalized],
+            )
+        conn.commit()
+
+
+def remove_seen_job_ids(job_ids: Any) -> None:
+    if not enabled():
+        return
+    normalized = sorted(
+        {str(job_id).strip() for job_id in (job_ids or []) if str(job_id).strip()}
+    )
+    if not normalized:
+        return
+    ensure_schema()
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM seen_jobs WHERE job_id = ANY(%s)", (normalized,))
         conn.commit()

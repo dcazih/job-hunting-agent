@@ -135,7 +135,9 @@ On Vercel, writable storage is ephemeral and is used only as a temporary cache. 
 - `/tmp/job-hunting-agent/profile`
 - `/tmp/job-hunting-agent/uploads`
 
-When `DATABASE_URL` or `POSTGRES_URL` is configured, durable resumes, reports, search progress, memory, and scheduler state are stored in Postgres and survive refreshes, cold starts, and different Vercel instances.
+When `DATABASE_URL` or `POSTGRES_URL` is configured, durable resumes, reports, seen-job history, search progress, memory, and scheduler state are stored in Postgres and survive refreshes, cold starts, and different Vercel instances.
+
+Check `/api/health` after deploying. It must report `"durable_storage": "postgres"` for seen-job history and other persistent state to survive Vercel cold starts.
 
 ## Notes
 

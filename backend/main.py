@@ -48,6 +48,7 @@ from backend.agent import (
     UPLOAD_THUMBNAILS_DIR,
 )
 from backend.schemas import EmailLatestRequest, FeedbackRequest, PreferencesRequest, ScheduleRequest, ChatRequest
+from job_tools.cloud_state import enabled as cloud_enabled
 
 
 app = FastAPI(title="Job Hunting Agent API", version="0.1.0")
@@ -137,7 +138,10 @@ def _shutdown_scheduler() -> None:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "durable_storage": "postgres" if cloud_enabled() else "ephemeral",
+    }
 
 
 @app.post("/api/resume/upload")

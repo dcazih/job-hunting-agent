@@ -645,6 +645,8 @@ export default function App() {
   const [openReportMenu, setOpenReportMenu] = useState("");
   const [sidebarSearchActive, setSidebarSearchActive] = useState(false);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const [sidebarReportsFallbackWord, setSidebarReportsFallbackWord] = useState(() => getRandomFetchingFallback());
+  const [sidebarReportsEmptyReady, setSidebarReportsEmptyReady] = useState(false);
 
   const [messages, setMessages] = useState([]);
   const [focusRequest, setFocusRequest] = useState(null);
@@ -734,6 +736,8 @@ export default function App() {
   const dragClearTimerRef = useRef(null);
   const introSuggestionRotateTimerRef = useRef(null);
   const introSuggestionFadeTimerRef = useRef(null);
+  const sidebarReportsEmptyTimerRef = useRef(null);
+  const sidebarReportsFallbackTimerRef = useRef(null);
   const mobileSidebarCloseTimerRef = useRef(null);
   const searchSummaryHoldUntilRef = useRef(0);
   const searchRunIdRef = useRef("");
@@ -1346,7 +1350,7 @@ export default function App() {
       setDeletingReportPath(reportPath);
 
       await new Promise((resolve) => {
-        setTimeout(resolve, 220);
+        setTimeout(resolve, 3040);
       });
 
       await api(`/api/reports/item?report_path=${encodeURIComponent(reportPath)}`, { method: "DELETE" });
@@ -1908,6 +1912,55 @@ export default function App() {
     return haystack.includes(q);
   });
 
+  useEffect(() => {
+    if (sidebarCollapsedForLayout || filteredReports.length > 0) {
+      if (sidebarReportsEmptyTimerRef.current) {
+        clearTimeout(sidebarReportsEmptyTimerRef.current);
+        sidebarReportsEmptyTimerRef.current = null;
+      }
+      if (sidebarReportsFallbackTimerRef.current) {
+        clearInterval(sidebarReportsFallbackTimerRef.current);
+        sidebarReportsFallbackTimerRef.current = null;
+      }
+      setSidebarReportsFallbackWord(getRandomFetchingFallback());
+      setSidebarReportsEmptyReady(false);
+      return undefined;
+    }
+
+    setSidebarReportsEmptyReady(false);
+    setSidebarReportsFallbackWord((previousWord) => getRandomFetchingFallback(previousWord));
+    if (sidebarReportsFallbackTimerRef.current) {
+      clearInterval(sidebarReportsFallbackTimerRef.current);
+      sidebarReportsFallbackTimerRef.current = null;
+    }
+    if (sidebarReportsEmptyTimerRef.current) {
+      clearTimeout(sidebarReportsEmptyTimerRef.current);
+      sidebarReportsEmptyTimerRef.current = null;
+    }
+
+    sidebarReportsFallbackTimerRef.current = window.setInterval(() => {
+      setSidebarReportsFallbackWord((previousWord) => getRandomFetchingFallback(previousWord));
+    }, 900);
+    sidebarReportsEmptyTimerRef.current = window.setTimeout(() => {
+      if (sidebarReportsFallbackTimerRef.current) {
+        clearInterval(sidebarReportsFallbackTimerRef.current);
+        sidebarReportsFallbackTimerRef.current = null;
+      }
+      setSidebarReportsEmptyReady(true);
+    }, 7000);
+
+    return () => {
+      if (sidebarReportsEmptyTimerRef.current) {
+        clearTimeout(sidebarReportsEmptyTimerRef.current);
+        sidebarReportsEmptyTimerRef.current = null;
+      }
+      if (sidebarReportsFallbackTimerRef.current) {
+        clearInterval(sidebarReportsFallbackTimerRef.current);
+        sidebarReportsFallbackTimerRef.current = null;
+      }
+    };
+  }, [filteredReports.length, sidebarCollapsedForLayout, sidebarSearchQuery]);
+
   function handleSubmit(event) {
     event.preventDefault();
     if (busy) {
@@ -2332,12 +2385,17 @@ export default function App() {
 
         {!sidebarCollapsedForLayout && <h3 className="report-list-title">Reports</h3>}
         <div className="report-list">
-          {filteredReports.length === 0 && !sidebarCollapsedForLayout && <p className="muted">No reports found.</p>}
+          {filteredReports.length === 0 && !sidebarCollapsedForLayout && (
+            <p className="muted">
+              {sidebarReportsEmptyReady ? "No reports found." : `${sidebarReportsFallbackWord}...`}
+            </p>
+          )}
 
-          {filteredReports.map((item) => (
+          {filteredReports.map((item, index) => (
             <div
               key={item.report_path}
-              className={`report-item-wrap ${deletingReportPath === item.report_path ? "deleting" : ""}`}
+              className={`report-item-wrap ${openReportMenu === item.report_path ? "menu-open" : ""} ${deletingReportPath === item.report_path ? "deleting" : ""}`}
+              style={{ "--report-item-index": index }}
               onClick={(event) => event.stopPropagation()}
             >
               <button

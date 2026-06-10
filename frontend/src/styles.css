@@ -279,9 +279,16 @@ svg,
 
 .report-item-wrap {
   position: relative;
+  z-index: 1;
   opacity: 1;
   max-height: 64px;
-  transition: opacity 220ms ease, max-height 220ms ease, margin 220ms ease;
+  transform-origin: top center;
+  animation: report-item-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: min(calc(var(--report-item-index, 0) * 35ms), 280ms);
+}
+
+.report-item-wrap.menu-open {
+  z-index: 100;
 }
 
 .resume-drop-overlay {
@@ -322,10 +329,51 @@ svg,
 }
 
 .report-item-wrap.deleting {
-  opacity: 0;
-  max-height: 0;
-  margin: 0;
+  pointer-events: none;
   overflow: hidden;
+  animation: report-item-exit 320ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation-delay: 0ms;
+}
+
+.report-item-wrap.deleting .report-item,
+.report-item-wrap.deleting .report-menu-trigger,
+.report-item-wrap.deleting .report-menu {
+  animation: report-item-content-exit 220ms ease-in forwards;
+}
+
+@keyframes report-item-enter {
+  from {
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    max-height: 64px;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes report-item-exit {
+  from {
+    max-height: 64px;
+    margin-bottom: 0;
+  }
+  to {
+    max-height: 0;
+    margin-bottom: -0.45rem;
+  }
+}
+
+@keyframes report-item-content-exit {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-24px) scale(0.96);
+  }
 }
 
 .report-item {
@@ -388,7 +436,7 @@ svg,
   background: #2a2a2a;
   border-radius: 8px;
   padding: 0.28rem;
-  z-index: 20;
+  z-index: 101;
 }
 
 .report-menu button {

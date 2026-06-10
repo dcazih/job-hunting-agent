@@ -4,7 +4,14 @@ import json
 import os
 import re
 from typing import Any
-from job_tools.cloud_state import enabled as cloud_enabled, get_json as cloud_get_json, set_json as cloud_set_json
+from job_tools.cloud_state import (
+    add_seen_job_ids as cloud_add_seen_job_ids,
+    enabled as cloud_enabled,
+    get_json as cloud_get_json,
+    get_seen_job_ids as cloud_get_seen_job_ids,
+    remove_seen_job_ids as cloud_remove_seen_job_ids,
+    set_json as cloud_set_json,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -18,12 +25,24 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
 RUN_STATE_FILE = DATA_DIR / "last_successful_report_date.txt"
 REPORT_ENTRIES_KEY = "reports.entries"
+LEGACY_SEEN_JOBS_KEY = "jobs.seen_ids"
 
 
 def load_seen_job_ids():
     if cloud_enabled():
-        payload = cloud_get_json("jobs.seen_ids", [])
-        return set(payload or [])
+        seen_ids = cloud_get_seen_job_ids()
+        legacy_ids = {
+            str(job_id).strip()
+            for job_id in (cloud_get_json(LEGACY_SEEN_JOBS_KEY, []) or [])
+            if str(job_id).strip()
+        }
+        missing_legacy_ids = legacy_ids.difference(seen_ids)
+        if missing_legacy_ids:
+            cloud_add_seen_job_ids(missing_legacy_ids)
+            seen_ids.update(missing_legacy_ids)
+        if legacy_ids:
+            cloud_set_json(LEGACY_SEEN_JOBS_KEY, [])
+        return seen_ids
     if not SEEN_JOBS_FILE.exists():
         return set()
 
@@ -35,9 +54,7 @@ def load_seen_job_ids():
 
 def save_seen_job_ids(job_ids):
     if cloud_enabled():
-        existing = set(cloud_get_json("jobs.seen_ids", []) or [])
-        updated = sorted(list(existing.union(set(job_ids))))
-        cloud_set_json("jobs.seen_ids", updated)
+        cloud_add_seen_job_ids(job_ids)
         return
     existing = load_seen_job_ids()
     updated = existing.union(set(job_ids))
@@ -51,9 +68,7 @@ def remove_seen_job_ids(job_ids):
     if not ids_to_remove:
         return
     if cloud_enabled():
-        existing = set(cloud_get_json("jobs.seen_ids", []) or [])
-        updated = sorted(list(existing.difference(ids_to_remove)))
-        cloud_set_json("jobs.seen_ids", updated)
+        cloud_remove_seen_job_ids(ids_to_remove)
         return
 
     existing = load_seen_job_ids()
