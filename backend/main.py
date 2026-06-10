@@ -46,6 +46,7 @@ from backend.agent import (
     stop_scheduler,
     set_active_uploaded_resume,
     UPLOAD_THUMBNAILS_DIR,
+    ensure_resume_thumbnail_for_upload,
 )
 from backend.schemas import EmailLatestRequest, FeedbackRequest, PreferencesRequest, ScheduleRequest, ChatRequest
 from job_tools.cloud_state import enabled as cloud_enabled
@@ -198,7 +199,9 @@ def get_resume_upload_thumbnail(upload_name: str):
     safe_name = Path(upload_name).name
     thumb_path = UPLOAD_THUMBNAILS_DIR / f"{Path(safe_name).stem}.png"
     if not thumb_path.exists():
-        raise HTTPException(status_code=404, detail="Resume thumbnail not found")
+        thumb_path = ensure_resume_thumbnail_for_upload(safe_name)
+        if thumb_path is None or not thumb_path.exists():
+            raise HTTPException(status_code=404, detail="Resume thumbnail not found")
     return FileResponse(thumb_path, media_type="image/png")
 
 

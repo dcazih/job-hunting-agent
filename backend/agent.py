@@ -653,6 +653,22 @@ def _ensure_resume_thumbnail(pdf_path: Path) -> Path | None:
         doc.close()
 
 
+def ensure_resume_thumbnail_for_upload(upload_name: str) -> Path | None:
+    safe_name = Path(upload_name).name
+    if not safe_name:
+        return None
+
+    if cloud_enabled():
+        upload = _find_cloud_resume_upload(safe_name)
+        if upload is None:
+            return None
+        pdf_path = _materialize_cloud_resume_upload(upload)
+        return _ensure_resume_thumbnail(pdf_path)
+
+    pdf_path = UPLOADS_DIR / safe_name
+    return _ensure_resume_thumbnail(pdf_path)
+
+
 def save_uploaded_resume(file_name: str, content: bytes) -> dict[str, Any]:
     if not file_name.lower().endswith(".pdf"):
         raise ValueError("Only PDF files are supported.")
@@ -771,10 +787,10 @@ def list_uploaded_resumes() -> dict[str, Any]:
 
         items = []
         for item in uploads:
-            upload_path = _materialize_cloud_resume_upload(item)
-            thumb = _ensure_resume_thumbnail(upload_path)
             name = str(item.get("name", "") or "")
             display_name = str(item.get("display_name", "") or (name.split("_", 1)[1] if "_" in name else name))
+            thumb_path = _thumbnail_path_for_upload(name)
+            thumb = thumb_path if thumb_path.exists() else None
             thumb_url = f"/api/resume/uploads/{name}/thumbnail" if thumb else None
             items.append(
                 {
@@ -796,7 +812,8 @@ def list_uploaded_resumes() -> dict[str, Any]:
 
     items = []
     for item in uploads:
-        thumb = _ensure_resume_thumbnail(item)
+        thumb_path = _thumbnail_path_for_upload(item.name)
+        thumb = thumb_path if thumb_path.exists() else None
         thumb_url = f"/api/resume/uploads/{item.name}/thumbnail" if thumb else None
         items.append(
             {
