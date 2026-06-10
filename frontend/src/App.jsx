@@ -2468,8 +2468,10 @@ export default function App() {
         )}
         {introMode && (
           <div className={`intro-shell ${introFadingOut ? "fade-out" : ""} ${returningToIntro ? "entering" : ""} ${startupReveal ? "" : "startup-enter"}`}>
-            <h1 className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Drop your resume. Start the hunt.</h1>
-            <p className={startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}>Describe the role you want and I will search and score Linkedin's top matches.</p>
+            <div className={startupReveal ? "intro-hero-copy intro-hero-fade-in" : "intro-hero-copy intro-hero-startup"}>
+              <h1>Drop your resume. Start the hunt.</h1>
+              <p>Describe the role you want and I will search and score Linkedin's top matches.</p>
+            </div>
 
             <form className={`intro-composer ${startupReveal ? "intro-hero-fade-in" : "intro-hero-startup"}`} onSubmit={handleSubmit}>
               <div className={`composer-shell single-line ${resumePickerOpen ? "with-resume-strip" : ""}`}>
