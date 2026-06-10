@@ -1475,15 +1475,26 @@ svg,
   position: relative;
 }
 
+.resume-toggle-glyph {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .resume-status-icon,
 .resume-close-icon,
 .resume-empty-icon {
   position: absolute;
-  transition: opacity 140ms ease;
+  transition: opacity 180ms ease, transform 180ms ease;
+  will-change: opacity, transform;
 }
 
 .resume-status-icon {
-  opacity: 1;
+  opacity: 0;
+  transform: scale(0.88);
 }
 
 .resume-file-with-badge {
@@ -1512,10 +1523,19 @@ svg,
 
 .resume-close-icon {
   opacity: 0;
+  transform: scale(0.88);
 }
 
 .resume-empty-icon {
   opacity: 0;
+  transform: scale(0.88);
+}
+
+.resume-status-icon.visible,
+.resume-empty-icon.visible,
+.resume-close-icon.visible {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .resume-toggle-button.open .resume-status-icon {

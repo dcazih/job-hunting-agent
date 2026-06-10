@@ -645,7 +645,6 @@ export default function App() {
   const [openReportMenu, setOpenReportMenu] = useState("");
   const [sidebarSearchActive, setSidebarSearchActive] = useState(false);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
-  const [sidebarReportsFallbackWord, setSidebarReportsFallbackWord] = useState(() => getRandomFetchingFallback());
   const [sidebarReportsEmptyReady, setSidebarReportsEmptyReady] = useState(false);
 
   const [messages, setMessages] = useState([]);
@@ -737,7 +736,6 @@ export default function App() {
   const introSuggestionRotateTimerRef = useRef(null);
   const introSuggestionFadeTimerRef = useRef(null);
   const sidebarReportsEmptyTimerRef = useRef(null);
-  const sidebarReportsFallbackTimerRef = useRef(null);
   const mobileSidebarCloseTimerRef = useRef(null);
   const searchSummaryHoldUntilRef = useRef(0);
   const searchRunIdRef = useRef("");
@@ -1918,34 +1916,17 @@ export default function App() {
         clearTimeout(sidebarReportsEmptyTimerRef.current);
         sidebarReportsEmptyTimerRef.current = null;
       }
-      if (sidebarReportsFallbackTimerRef.current) {
-        clearInterval(sidebarReportsFallbackTimerRef.current);
-        sidebarReportsFallbackTimerRef.current = null;
-      }
-      setSidebarReportsFallbackWord(getRandomFetchingFallback());
       setSidebarReportsEmptyReady(false);
       return undefined;
     }
 
     setSidebarReportsEmptyReady(false);
-    setSidebarReportsFallbackWord((previousWord) => getRandomFetchingFallback(previousWord));
-    if (sidebarReportsFallbackTimerRef.current) {
-      clearInterval(sidebarReportsFallbackTimerRef.current);
-      sidebarReportsFallbackTimerRef.current = null;
-    }
     if (sidebarReportsEmptyTimerRef.current) {
       clearTimeout(sidebarReportsEmptyTimerRef.current);
       sidebarReportsEmptyTimerRef.current = null;
     }
 
-    sidebarReportsFallbackTimerRef.current = window.setInterval(() => {
-      setSidebarReportsFallbackWord((previousWord) => getRandomFetchingFallback(previousWord));
-    }, 900);
     sidebarReportsEmptyTimerRef.current = window.setTimeout(() => {
-      if (sidebarReportsFallbackTimerRef.current) {
-        clearInterval(sidebarReportsFallbackTimerRef.current);
-        sidebarReportsFallbackTimerRef.current = null;
-      }
       setSidebarReportsEmptyReady(true);
     }, 7000);
 
@@ -1953,10 +1934,6 @@ export default function App() {
       if (sidebarReportsEmptyTimerRef.current) {
         clearTimeout(sidebarReportsEmptyTimerRef.current);
         sidebarReportsEmptyTimerRef.current = null;
-      }
-      if (sidebarReportsFallbackTimerRef.current) {
-        clearInterval(sidebarReportsFallbackTimerRef.current);
-        sidebarReportsFallbackTimerRef.current = null;
       }
     };
   }, [filteredReports.length, sidebarCollapsedForLayout, sidebarSearchQuery]);
@@ -2387,7 +2364,7 @@ export default function App() {
         <div className="report-list">
           {filteredReports.length === 0 && !sidebarCollapsedForLayout && (
             <p className="muted">
-              {sidebarReportsEmptyReady ? "No reports found." : `${sidebarReportsFallbackWord}...`}
+              {sidebarReportsEmptyReady ? "No reports found." : "Fetching reports..."}
             </p>
           )}
 
@@ -2533,14 +2510,11 @@ export default function App() {
                       disabled={busy}
                       aria-label={hasResume ? "Toggle resumes" : "Upload resume"}
                     >
-                      {hasResume ? (
-                        <>
-                          <ResumePresentIcon className="resume-status-icon" />
-                          <FontAwesomeIcon icon={faXmark} className="resume-close-icon" />
-                        </>
-                      ) : (
-                        <FontAwesomeIcon icon={faPlus} className="resume-empty-icon" />
-                      )}
+                      <span className="resume-toggle-glyph" aria-hidden="true">
+                        <ResumePresentIcon className={`resume-status-icon ${hasResume ? "visible" : ""}`} />
+                        <FontAwesomeIcon icon={faPlus} className={`resume-empty-icon ${hasResume ? "" : "visible"}`} />
+                      </span>
+                      <FontAwesomeIcon icon={faXmark} className="resume-close-icon" />
                     </button>
                   </div>
 
@@ -2697,14 +2671,11 @@ export default function App() {
                   disabled={busy}
                   aria-label={hasResume ? "Toggle resumes" : "Upload resume"}
                 >
-                  {hasResume ? (
-                    <>
-                      <ResumePresentIcon className="resume-status-icon" />
-                      <FontAwesomeIcon icon={faXmark} className="resume-close-icon" />
-                    </>
-                  ) : (
-                    <FontAwesomeIcon icon={faPlus} className="resume-empty-icon" />
-                  )}
+                  <span className="resume-toggle-glyph" aria-hidden="true">
+                    <ResumePresentIcon className={`resume-status-icon ${hasResume ? "visible" : ""}`} />
+                    <FontAwesomeIcon icon={faPlus} className={`resume-empty-icon ${hasResume ? "" : "visible"}`} />
+                  </span>
+                  <FontAwesomeIcon icon={faXmark} className="resume-close-icon" />
                 </button>
               </div>
 
