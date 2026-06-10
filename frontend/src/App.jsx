@@ -639,7 +639,6 @@ export default function App() {
   const [collapsedHoverArmed, setCollapsedHoverArmed] = useState(false);
   const [collapsedHoverActive, setCollapsedHoverActive] = useState(false);
   const [sidebarAnimating, setSidebarAnimating] = useState(false);
-  const [deletingReportPath, setDeletingReportPath] = useState("");
   const [reports, setReports] = useState([]);
   const [selectedReportPath, setSelectedReportPath] = useState("");
   const [openReportMenu, setOpenReportMenu] = useState("");
@@ -1345,15 +1344,8 @@ export default function App() {
 
   async function deleteReport(reportPath) {
     try {
-      setDeletingReportPath(reportPath);
-
-      await new Promise((resolve) => {
-        setTimeout(resolve, 3040);
-      });
-
       await api(`/api/reports/item?report_path=${encodeURIComponent(reportPath)}`, { method: "DELETE" });
       setOpenReportMenu("");
-      setDeletingReportPath("");
 
       const updated = await refreshReports();
       if (selectedReportPath === reportPath) {
@@ -1365,7 +1357,6 @@ export default function App() {
         }
       }
     } catch (error) {
-      setDeletingReportPath("");
       appendText(error.message);
     }
   }
@@ -2371,7 +2362,7 @@ export default function App() {
           {filteredReports.map((item, index) => (
             <div
               key={item.report_path}
-              className={`report-item-wrap ${openReportMenu === item.report_path ? "menu-open" : ""} ${deletingReportPath === item.report_path ? "deleting" : ""}`}
+              className={`report-item-wrap ${openReportMenu === item.report_path ? "menu-open" : ""}`}
               style={{ "--report-item-index": index }}
               onClick={(event) => event.stopPropagation()}
             >
