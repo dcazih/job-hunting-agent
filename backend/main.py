@@ -105,6 +105,35 @@ def _extract_search_hints(message: str) -> dict[str, str]:
     if re.search(r"\bremote\b", lower):
         location = "Remote, United States"
 
+    posted_within = ""
+    recency_patterns = [
+        r"\b(?:within\s+)?(?:the\s+)?(?:last|past)\s+(?:\d+\s+)?(?:hours?|days?|weeks?|months?)\b",
+        r"\b(?:posted|listed|published)\s+(?:since|after)\s+\d{4}-\d{2}-\d{2}\b",
+        r"\b(?:posted|listed|published)\s+today\b",
+    ]
+    for pattern in recency_patterns:
+        match = re.search(pattern, lower)
+        if match:
+            posted_within = match.group(0).strip()
+            break
+
+    internship_timeframe = ""
+    if re.search(r"\bintern(?:ship)?s?\b", lower):
+        timeframe_patterns = [
+            r"\bbetween\s+\d{4}-\d{2}-\d{2}\s+and\s+\d{4}-\d{2}-\d{2}\b",
+            r"\bfrom\s+\d{4}-\d{2}-\d{2}\s+(?:to|through|until)\s+\d{4}-\d{2}-\d{2}\b",
+            r"\b(?:for\s+)?\d+\s*[- ]?\s*(?:weeks?|months?)\b",
+            r"\b(?:this|next)\s+(?:spring|summer|fall|autumn|winter)\b",
+            r"\b(?:spring|summer|fall|autumn|winter)\s+\d{4}\b",
+            r"\b(?:for|during)\s+(?:the\s+)?(?:spring|summer|fall|autumn|winter)\b",
+            r"\b(?:spring|summer|fall|autumn|winter)\b",
+        ]
+        for pattern in timeframe_patterns:
+            match = re.search(pattern, lower)
+            if match:
+                internship_timeframe = match.group(0).strip()
+                break
+
     hints: dict[str, str] = {}
     if target_industry:
         hints["target_industry"] = target_industry
@@ -114,6 +143,10 @@ def _extract_search_hints(message: str) -> dict[str, str]:
         hints["job_level"] = job_level
     if location:
         hints["location"] = location
+    if posted_within:
+        hints["posted_within"] = posted_within
+    if internship_timeframe:
+        hints["internship_timeframe"] = internship_timeframe
     return hints
 
 app.add_middleware(

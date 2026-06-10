@@ -13,7 +13,10 @@ from job_tools.resume_loader import (
 )
 from job_tools.linkedin_scraper import scrape_jobs
 from job_tools.job_scorer import score_jobs
-from job_tools.search_pipeline import collect_filtered_search_jobs
+from job_tools.search_pipeline import (
+    collect_filtered_search_jobs,
+    internship_timeframe_search_terms,
+)
 from job_tools.storage import (
     load_seen_job_ids,
     save_seen_job_ids,
@@ -102,7 +105,10 @@ def _normalize_job_level(job_level: str) -> str:
 
 
 def _build_search_keywords(
-    target_industry: str, company: str = "", job_level: str = ""
+    target_industry: str,
+    company: str = "",
+    job_level: str = "",
+    internship_timeframe: str = "",
 ) -> str:
     parts = [str(target_industry or "").strip()]
     normalized_level = _normalize_job_level(job_level)
@@ -111,6 +117,9 @@ def _build_search_keywords(
     company_text = str(company or "").strip()
     if company_text:
         parts.append(company_text)
+    timeframe_text = internship_timeframe_search_terms(internship_timeframe)
+    if timeframe_text:
+        parts.append(timeframe_text)
     return " ".join(part for part in parts if part)
 
 
@@ -460,6 +469,8 @@ def _run_search_pipeline_core(
     company: str = "",
     job_level: str = "",
     location: str = "United States",
+    posted_within: str = "",
+    internship_timeframe: str = "",
     pages: int = 1,
     should_email: bool = False,
     to_email: str = "",
@@ -495,8 +506,15 @@ def _run_search_pipeline_core(
         search_location = _normalize_location(location)
         search_company = str(company or "").strip()
         search_job_level = _normalize_job_level(job_level)
+        search_posted_within = " ".join(str(posted_within or "").strip().split())
+        search_internship_timeframe = " ".join(
+            str(internship_timeframe or "").strip().split()
+        )
         search_keywords = _build_search_keywords(
-            search_term, search_company, search_job_level
+            search_term,
+            search_company,
+            search_job_level,
+            search_internship_timeframe,
         )
 
         set_search_run_progress(
@@ -576,6 +594,8 @@ def _run_search_pipeline_core(
             company=search_company,
             job_level=search_job_level,
             location=search_location,
+            posted_within=search_posted_within,
+            internship_timeframe=search_internship_timeframe,
             requested_pages=pages,
             minimum_jobs=3,
             max_pages=10,
@@ -674,6 +694,8 @@ def _run_search_pipeline_core(
         search_location = search_result.location
         search_company = search_result.company
         search_job_level = search_result.job_level
+        search_posted_within = search_result.posted_within
+        search_internship_timeframe = search_result.internship_timeframe
 
         if not jobs:
             no_jobs_message = (
@@ -703,6 +725,8 @@ def _run_search_pipeline_core(
                 "keywords": search_keywords,
                 "company": search_company,
                 "job_level": search_job_level,
+                "posted_within": search_posted_within,
+                "internship_timeframe": search_internship_timeframe,
                 "location": search_location,
                 "pages": int(max(1, min(10, pages))),
                 "scraped_count": found_count,
@@ -794,6 +818,8 @@ def _run_search_pipeline_core(
             "keywords": search_keywords,
             "company": search_company,
             "job_level": search_job_level,
+            "posted_within": search_posted_within,
+            "internship_timeframe": search_internship_timeframe,
             "location": search_location,
             "pages": int(max(1, min(10, pages))),
             "scraped_count": found_count,
@@ -816,6 +842,8 @@ def run_search_pipeline(
     company: str = "",
     job_level: str = "",
     location: str = "United States",
+    posted_within: str = "",
+    internship_timeframe: str = "",
     pages: int = 1,
     should_email: bool = False,
     to_email: str = "",
@@ -823,6 +851,12 @@ def run_search_pipeline(
     """
     Run the full search pipeline in one tool call.
     The agent should use this for every new search request.
+
+    `posted_within` is an optional natural-language recency constraint such as
+    "last month", "past 7 days", or "since 2026-06-01".
+    `internship_timeframe` is an optional internship-only season, duration, or
+    date range such as "summer 2026", "12 weeks", or
+    "between 2026-06-01 and 2026-08-31".
     """
     _tool_log("run_search_pipeline")
     active_resume_display_name = get_current_resume_display_name()
@@ -879,6 +913,8 @@ def run_search_pipeline(
             company=company,
             job_level=job_level,
             location=location,
+            posted_within=posted_within,
+            internship_timeframe=internship_timeframe,
             pages=pages,
             should_email=should_email,
             to_email=to_email,
@@ -897,6 +933,10 @@ def run_search_pipeline(
                     target_industry=resolved_target_industry,
                     company=str(company or "").strip(),
                     job_level=_normalize_job_level(job_level),
+                    posted_within=" ".join(str(posted_within or "").strip().split()),
+                    internship_timeframe=" ".join(
+                        str(internship_timeframe or "").strip().split()
+                    ),
                     location=_normalize_location(location),
                     pages=pages,
                     status=status,
@@ -1137,6 +1177,8 @@ def run_search_report_and_email(
     company: str = "",
     job_level: str = "",
     location: str = "United States",
+    posted_within: str = "",
+    internship_timeframe: str = "",
     pages: int = 1,
     to_email: str = "",
 ) -> dict:
@@ -1150,6 +1192,8 @@ def run_search_report_and_email(
         company=company,
         job_level=job_level,
         location=location,
+        posted_within=posted_within,
+        internship_timeframe=internship_timeframe,
         pages=pages,
         to_email=to_email,
     )

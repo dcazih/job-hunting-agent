@@ -1023,7 +1023,11 @@ def _extract_report_role(keywords: str, top_jobs: list[dict[str, Any]]) -> str:
 def _report_display_name(role: str) -> str:
     now = _now_in_timezone()
     date_text = now.strftime("%b %d, %Y").replace(" 0", " ")
-    return f"{role} · {date_text}"
+    hour_text = now.strftime("%I").lstrip("0") or "0"
+    minute_text = now.strftime("%M")
+    meridiem_text = now.strftime("%p")
+    time_text = f"{hour_text}:{minute_text} {meridiem_text}"
+    return f"{role} · {date_text}, {time_text}"
 
 
 def _build_report(scored_jobs: list[dict[str, Any]], keywords: str) -> dict[str, Any]:
@@ -1095,6 +1099,8 @@ def execute_search_run(
     keywords: str,
     location: str,
     pages: int,
+    posted_within: str = "",
+    internship_timeframe: str = "",
     send_email_after: bool = False,
     auto_email_to: str = "",
 ) -> None:
@@ -1118,6 +1124,10 @@ def execute_search_run(
         search_location = normalize_location(location)
         search_company = ""
         search_job_level = ""
+        search_posted_within = " ".join(str(posted_within or "").strip().split())
+        search_internship_timeframe = " ".join(
+            str(internship_timeframe or "").strip().split()
+        )
 
         _guard_canceled(run_id)
         _set_progress(run_id, status="running", progress=10, step="Loading profile")
@@ -1134,6 +1144,8 @@ def execute_search_run(
             company=search_company,
             job_level=search_job_level,
             location=search_location,
+            posted_within=search_posted_within,
+            internship_timeframe=search_internship_timeframe,
             requested_pages=pages,
             minimum_jobs=3,
             max_pages=10,
@@ -1199,6 +1211,8 @@ def execute_search_run(
         search_location = search_result.location
         search_company = search_result.company
         search_job_level = search_result.job_level
+        search_posted_within = search_result.posted_within
+        search_internship_timeframe = search_result.internship_timeframe
         found_count = search_result.scraped_count
 
         if not jobs:
@@ -1221,6 +1235,8 @@ def execute_search_run(
                     "report_path": "",
                     "report_name": "",
                     "target_industry": search_term,
+                    "posted_within": search_posted_within,
+                    "internship_timeframe": search_internship_timeframe,
                     "message": no_jobs_message,
                 },
             )
@@ -1251,6 +1267,8 @@ def execute_search_run(
         _guard_canceled(run_id)
         _set_progress(run_id, status="running", progress=90, step="Building report")
         result = _build_report(scored_jobs, search_keywords or search_term)
+        result["posted_within"] = search_posted_within
+        result["internship_timeframe"] = search_internship_timeframe
 
         _guard_canceled(run_id)
         save_seen_job_ids([job.get("job_id") or job.get("url") for job in scored_jobs if (job.get("job_id") or job.get("url"))])
@@ -1316,6 +1334,7 @@ def get_latest_report() -> dict[str, Any]:
         "found": True,
         "report_path": latest_report["report_path"],
         "report_name": str(latest_report.get("report_name") or Path(report_path_value).name),
+        "report_display_name": str(latest_report.get("report_display_name") or latest_report.get("report_name") or Path(report_path_value).name),
         "target_industry": target_industry,
         "report": latest_report["report"],
         "top_jobs": top_jobs,
@@ -1336,6 +1355,7 @@ def get_report_by_path(report_path: str) -> dict[str, Any]:
             "found": True,
             "report_path": str(entry.get("report_path", "") or report_path),
             "report_name": str(entry.get("name", "") or Path(str(report_path)).name),
+            "report_display_name": str(entry.get("display_name", "") or entry.get("name", "") or Path(str(report_path)).name),
             "target_industry": target_industry,
             "report": str(entry.get("report", "") or ""),
             "top_jobs": top_jobs,
@@ -1372,6 +1392,7 @@ def get_report_by_path(report_path: str) -> dict[str, Any]:
         "found": True,
         "report_path": str(requested_path),
         "report_name": requested_path.name,
+        "report_display_name": str(snapshot.get("display_name", "") or requested_path.name) if snapshot_path.exists() else requested_path.name,
         "target_industry": target_industry,
         "report": requested_path.read_text(encoding="utf-8"),
         "top_jobs": top_jobs,

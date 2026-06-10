@@ -24,7 +24,7 @@ SCRAPE_DELAY_MULTIPLIER = float(
 )
 
 
-def build_search_url(keywords, location, start=0):
+def build_search_url(keywords, location, start=0, posted_within_seconds=None):
     """
     Builds the public LinkedIn guest jobs search URL.
 
@@ -38,12 +38,20 @@ def build_search_url(keywords, location, start=0):
         "location": location,
         "start": start,
     }
+    if posted_within_seconds:
+        params["f_TPR"] = f"r{max(1, int(posted_within_seconds))}"
 
     return f"{BASE_SEARCH_URL}?{urlencode(params)}"
 
 
-def fetch_search_page(keywords, location, start=0):
-    url = build_search_url(keywords, location, start)
+def fetch_search_page(keywords, location, start=0, posted_within_seconds=None):
+    url = build_search_url(
+        keywords,
+        location,
+        start,
+        posted_within_seconds=posted_within_seconds,
+    )
+    print(f"LinkedIn search URL: {url}")
 
     response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
 
@@ -148,6 +156,7 @@ def scrape_jobs(
     pages=1,
     start_page=0,
     max_jobs=None,
+    posted_within_seconds=None,
     is_canceled=None,
     on_job_found=None,
 ):
@@ -165,7 +174,12 @@ def scrape_jobs(
         print(f"Fetching page {page + 1}, start={start}...")
 
         # Get jobs on the page
-        html = fetch_search_page(keywords, location, start=start)
+        html = fetch_search_page(
+            keywords,
+            location,
+            start=start,
+            posted_within_seconds=posted_within_seconds,
+        )
         jobs = parse_job_cards(html)
         if max_jobs is not None:
             remaining = max(0, int(max_jobs) - len(all_jobs))

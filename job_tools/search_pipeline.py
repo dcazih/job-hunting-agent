@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from dotenv import load_dotenv
@@ -28,6 +30,8 @@ class SearchFilterResult:
     target_industry: str
     company: str
     job_level: str
+    posted_within: str
+    internship_timeframe: str
     pages_checked: int
     jobs_checked: int
     scraped_count: int
@@ -64,7 +68,84 @@ def normalize_job_level(job_level: str) -> str:
     return text
 
 
-def build_search_keywords(target_industry: str, company: str = "", job_level: str = "") -> str:
+def normalize_posted_within(posted_within: str) -> str:
+    return " ".join(str(posted_within or "").strip().split())
+
+
+def posted_within_seconds(posted_within: str) -> int | None:
+    text = normalize_posted_within(posted_within).lower()
+    if not text:
+        return None
+
+    amount_match = re.search(
+        r"\b(?:within|past|last)\s+(?:the\s+)?(\d+|a|an|one)\s+"
+        r"(hour|day|week|month)s?\b",
+        text,
+    )
+    if amount_match:
+        amount_text, unit = amount_match.groups()
+        amount = 1 if amount_text in {"a", "an", "one"} else int(amount_text)
+        unit_seconds = {
+            "hour": 60 * 60,
+            "day": 24 * 60 * 60,
+            "week": 7 * 24 * 60 * 60,
+            "month": 30 * 24 * 60 * 60,
+        }
+        return amount * unit_seconds[unit]
+
+    aliases = {
+        "today": 24 * 60 * 60,
+        "past 24 hours": 24 * 60 * 60,
+        "last 24 hours": 24 * 60 * 60,
+        "past week": 7 * 24 * 60 * 60,
+        "last week": 7 * 24 * 60 * 60,
+        "past month": 30 * 24 * 60 * 60,
+        "last month": 30 * 24 * 60 * 60,
+    }
+    for phrase, seconds in aliases.items():
+        if phrase in text:
+            return seconds
+
+    date_match = re.search(r"\b(?:since|after)\s+(\d{4}-\d{2}-\d{2})\b", text)
+    if date_match:
+        try:
+            cutoff = datetime.strptime(date_match.group(1), "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+            return max(1, int((datetime.now(timezone.utc) - cutoff).total_seconds()))
+        except ValueError:
+            return None
+
+    return None
+
+
+def internship_timeframe_search_terms(internship_timeframe: str) -> str:
+    text = " ".join(str(internship_timeframe or "").strip().split()).lower()
+    if not text:
+        return ""
+
+    season_match = re.search(
+        r"\b(?:this|next)?\s*(spring|summer|fall|autumn|winter)(?:\s+(\d{4}))?\b",
+        text,
+    )
+    if season_match:
+        season, year = season_match.groups()
+        return " ".join(part for part in [season, year or ""] if part)
+
+    duration_match = re.search(r"\b(\d+)\s*[- ]?\s*(week|month)s?\b", text)
+    if duration_match:
+        amount, unit = duration_match.groups()
+        return f"{amount} {unit}"
+
+    return ""
+
+
+def build_search_keywords(
+    target_industry: str,
+    company: str = "",
+    job_level: str = "",
+    internship_timeframe: str = "",
+) -> str:
     parts = [str(target_industry or "").strip()]
     normalized_level = normalize_job_level(job_level)
     if normalized_level:
@@ -72,6 +153,9 @@ def build_search_keywords(target_industry: str, company: str = "", job_level: st
     company_text = str(company or "").strip()
     if company_text:
         parts.append(company_text)
+    timeframe_text = internship_timeframe_search_terms(internship_timeframe)
+    if timeframe_text:
+        parts.append(timeframe_text)
     return " ".join(part for part in parts if part)
 
 
@@ -128,6 +212,8 @@ def _should_keep_job(
     company: str,
     job_level: str,
     location: str,
+    posted_within: str,
+    internship_timeframe: str,
 ) -> JobRelevanceDecision:
     model = _get_relevance_model()
     print(f"LLM filtering job: {job.get('title')} at {job.get('company')}")
@@ -141,13 +227,19 @@ User request:
 - company: {company or "unspecified"}
 - job level: {job_level or "unspecified"}
 - location: {location or "United States"}
+- posted within: {posted_within or "unspecified"}
+- internship timeframe: {internship_timeframe or "unspecified"}
 
 Rules:
 - If company is specified, keep only jobs at that company or clearly for that employer.
 - If job level is specified, keep only jobs that match that seniority.
 - If the location is Remote or United States, keep remote jobs in the USA and jobs that explicitly fit that location.
+- If posted within is specified, discard jobs whose listed date falls outside that recency window.
+- If internship timeframe is specified, keep only internships whose dates, season, or stated duration fit that timeframe. Discard internships with a conflicting timeframe. If the listing gives no timeframe evidence, discard it.
 - If the job is unrelated, clearly senior when junior was requested, or otherwise does not fit, discard it.
 - If unsure, discard it.
+
+Current UTC date: {datetime.now(timezone.utc).date().isoformat()}
 
 Job:
 Title: {job.get("title")}
@@ -174,6 +266,8 @@ def filter_jobs_against_request(
     company: str = "",
     job_level: str = "",
     location: str = "United States",
+    posted_within: str = "",
+    internship_timeframe: str = "",
     is_canceled: Callable[[], bool] | None = None,
     should_stop: Callable[[], bool] | None = None,
     on_filter_progress: Callable[[dict[str, Any]], None] | None = None,
@@ -183,6 +277,10 @@ def filter_jobs_against_request(
     normalized_location = normalize_location(location)
     normalized_company = str(company or "").strip()
     normalized_level = normalize_job_level(job_level)
+    normalized_posted_within = normalize_posted_within(posted_within)
+    normalized_internship_timeframe = " ".join(
+        str(internship_timeframe or "").strip().split()
+    )
 
     total_jobs = len(jobs)
     for job_index, job in enumerate(jobs, start=1):
@@ -208,6 +306,8 @@ def filter_jobs_against_request(
                 company=normalized_company,
                 job_level=normalized_level,
                 location=normalized_location,
+                posted_within=normalized_posted_within,
+                internship_timeframe=normalized_internship_timeframe,
             )
         except Exception as error:
             print(
@@ -230,6 +330,8 @@ def collect_filtered_search_jobs(
     company: str = "",
     job_level: str = "",
     location: str = "United States",
+    posted_within: str = "",
+    internship_timeframe: str = "",
     requested_pages: int = 1,
     minimum_jobs: int = 3,
     max_pages: int = 10,
@@ -243,7 +345,17 @@ def collect_filtered_search_jobs(
     normalized_location = normalize_location(location)
     normalized_company = str(company or "").strip()
     normalized_level = normalize_job_level(job_level)
-    search_keywords = build_search_keywords(target_industry, normalized_company, normalized_level)
+    normalized_posted_within = normalize_posted_within(posted_within)
+    normalized_internship_timeframe = " ".join(
+        str(internship_timeframe or "").strip().split()
+    )
+    search_keywords = build_search_keywords(
+        target_industry,
+        normalized_company,
+        normalized_level,
+        normalized_internship_timeframe,
+    )
+    recency_seconds = posted_within_seconds(normalized_posted_within)
     seen_ids = set(load_seen_job_ids())
     collected_jobs: list[dict[str, Any]] = []
     pages_checked = 0
@@ -285,6 +397,7 @@ def collect_filtered_search_jobs(
             pages=1,
             start_page=page_index,
             max_jobs=max(0, no_match_job_limit - jobs_checked),
+            posted_within_seconds=recency_seconds,
             is_canceled=is_canceled,
             on_job_found=lambda **payload: on_job_progress(
                 {
@@ -329,6 +442,8 @@ def collect_filtered_search_jobs(
             company=normalized_company,
             job_level=normalized_level,
             location=normalized_location,
+            posted_within=normalized_posted_within,
+            internship_timeframe=normalized_internship_timeframe,
             is_canceled=is_canceled,
             should_stop=should_stop,
             on_filter_progress=on_filter_progress,
@@ -371,6 +486,8 @@ def collect_filtered_search_jobs(
                 target_industry=target_industry,
                 company=normalized_company,
                 job_level=normalized_level,
+                posted_within=normalized_posted_within,
+                internship_timeframe=normalized_internship_timeframe,
                 pages_checked=pages_checked,
                 jobs_checked=jobs_checked,
                 scraped_count=len(collected_jobs),
@@ -394,6 +511,8 @@ def collect_filtered_search_jobs(
                 target_industry=target_industry,
                 company=normalized_company,
                 job_level=normalized_level,
+                posted_within=normalized_posted_within,
+                internship_timeframe=normalized_internship_timeframe,
                 pages_checked=pages_checked,
                 jobs_checked=jobs_checked,
                 scraped_count=len(collected_jobs),
@@ -416,6 +535,8 @@ def collect_filtered_search_jobs(
         target_industry=target_industry,
         company=normalized_company,
         job_level=normalized_level,
+        posted_within=normalized_posted_within,
+        internship_timeframe=normalized_internship_timeframe,
         pages_checked=pages_checked,
         jobs_checked=jobs_checked,
         scraped_count=len(collected_jobs),

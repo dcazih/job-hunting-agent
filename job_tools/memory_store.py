@@ -151,6 +151,8 @@ def add_search_history(
     target_industry,
     company="",
     job_level="",
+    posted_within="",
+    internship_timeframe="",
     location,
     pages,
     status,
@@ -171,6 +173,8 @@ def add_search_history(
         "target_industry": target_industry,
         "company": company,
         "job_level": job_level,
+        "posted_within": posted_within,
+        "internship_timeframe": internship_timeframe,
         "location": location,
         "pages": int(pages),
         "status": status,
@@ -259,10 +263,14 @@ def memory_as_text():
         assistant_message = item.get("assistant_message") or ""
         company = item.get("company", "")
         job_level = item.get("job_level", "")
+        posted_within = item.get("posted_within", "")
+        internship_timeframe = item.get("internship_timeframe", "")
         summary = (
             f"- [{item['id']}] {item.get('target_industry', '')}"
             f"{f' @ {company}' if company else ''}"
             f"{f' [{job_level}]' if job_level else ''}"
+            f"{f' posted within {posted_within}' if posted_within else ''}"
+            f"{f' internship timeframe={internship_timeframe}' if internship_timeframe else ''}"
             f" in {item.get('location', '')} "
             f"pages={item.get('pages', 1)} status={item.get('status', '')} "
             f"scraped={item.get('scraped_count', 0)} fresh={item.get('fresh_count', 0)} "

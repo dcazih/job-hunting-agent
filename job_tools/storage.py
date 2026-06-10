@@ -230,6 +230,7 @@ def _unique_report_path(base_name: str) -> Path:
 
 def save_report(report_text, report_name: str | None = None, report_data: dict[str, Any] | None = None):
     cleaned_name = _sanitize_report_name(report_name or "")
+    display_name = (report_name or "").strip()
     if cloud_enabled():
         entries = _cloud_report_entries()
         if cleaned_name:
@@ -241,6 +242,7 @@ def save_report(report_text, report_name: str | None = None, report_data: dict[s
         entry = {
             "report_path": report_path,
             "name": Path(report_path).name,
+            "display_name": display_name or Path(report_path).name,
             "modified_at": datetime.now().isoformat(timespec="seconds"),
             "report": report_text,
         }
@@ -261,7 +263,9 @@ def save_report(report_text, report_name: str | None = None, report_data: dict[s
 
     if report_data:
         snapshot_path = REPORTS_DIR / f"{Path(path).stem}.json"
-        snapshot_path.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
+        snapshot_payload = dict(report_data)
+        snapshot_payload["display_name"] = display_name or Path(path).name
+        snapshot_path.write_text(json.dumps(snapshot_payload, indent=2), encoding="utf-8")
 
     return str(path)
 
@@ -272,10 +276,19 @@ def list_saved_reports() -> list[dict[str, Any]]:
 
     entries = []
     for path in sorted(REPORTS_DIR.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True):
+        snapshot_path = REPORTS_DIR / f"{path.stem}.json"
+        display_name = path.name
+        if snapshot_path.exists():
+            try:
+                snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                display_name = str(snapshot.get("display_name", "") or display_name)
+            except json.JSONDecodeError:
+                display_name = path.name
         entries.append(
             {
                 "report_path": str(path),
                 "name": path.name,
+                "display_name": display_name,
                 "modified_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             }
         )
@@ -389,6 +402,7 @@ def load_latest_report():
             "report_path": latest.get("report_path"),
             "report": latest.get("report"),
             "report_name": latest.get("name"),
+            "report_display_name": latest.get("display_name", latest.get("name")),
             "top_jobs": latest.get("top_jobs", []),
             "remaining_jobs": latest.get("remaining_jobs", []),
             "target_industry": latest.get("target_industry", ""),
@@ -407,5 +421,6 @@ def load_latest_report():
     return {
         "found": True,
         "report_path": str(latest_path),
-        "report": latest_path.read_text(encoding="utf-8")
+        "report": latest_path.read_text(encoding="utf-8"),
+        "report_display_name": (json.loads((REPORTS_DIR / f"{latest_path.stem}.json").read_text(encoding="utf-8")).get("display_name") if (REPORTS_DIR / f"{latest_path.stem}.json").exists() else latest_path.name),
     }

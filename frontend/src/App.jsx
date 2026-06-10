@@ -497,7 +497,7 @@ function ReportPanel({ report, onEmailLatest, emailBusy, onShowEmailTooltip, onH
 
   const topJobs = report.top_jobs || [];
   const remainingJobs = report.remaining_jobs || [];
-  const title = report.report_title || report.report_name || report.report_path?.split("/").pop() || "Untitled";
+  const title = report.report_title || report.report_display_name || report.report_name || report.report_path?.split("/").pop() || "Untitled";
 
   return (
     <section className="report-panel" ref={panelRef}>
@@ -968,7 +968,7 @@ export default function App() {
         }
 
         const jobAge = currentJobKey ? now - searchFetchJobSinceRef.current : 0;
-        const showJobLabel = Boolean(currentJobKey) && jobAge <= 7000;
+        const showJobLabel = Boolean(currentJobKey) && jobAge <= 12000;
 
         return {
           transitionKey: "hunting",
@@ -1906,7 +1906,7 @@ export default function App() {
   const filteredReports = reports.filter((item) => {
     const q = sidebarSearchQuery.trim().toLowerCase();
     if (!q) return true;
-    const haystack = `${item.name || ""} ${item.report_path || ""}`.toLowerCase();
+    const haystack = `${item.display_name || item.name || ""} ${item.report_path || ""}`.toLowerCase();
     return haystack.includes(q);
   });
 
@@ -1928,7 +1928,7 @@ export default function App() {
 
     sidebarReportsEmptyTimerRef.current = window.setTimeout(() => {
       setSidebarReportsEmptyReady(true);
-    }, 7000);
+    }, 12000);
 
     return () => {
       if (sidebarReportsEmptyTimerRef.current) {
@@ -2378,9 +2378,9 @@ export default function App() {
               <button
                 className={`report-item ${selectedReportPath === item.report_path ? "active" : ""}`}
                 onClick={() => loadReport(item.report_path)}
-                title={item.name}
+                title={item.display_name || item.name}
               >
-                {sidebarCollapsedForLayout ? "•" : item.name}
+                {sidebarCollapsedForLayout ? "•" : (item.display_name || item.name)}
               </button>
 
               {!isMobileLayout && !sidebarCollapsedForLayout && (
