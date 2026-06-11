@@ -315,6 +315,14 @@ def filter_jobs_against_request(
                 f"LLM filter failed for {job.get('title')} at {job.get('company')}: {error}"
             )
             rejected_count += 1
+            if callable(on_filter_result):
+                on_filter_result(
+                    {
+                        "job": job,
+                        "keep": False,
+                        "reason": f"LLM filter failed: {error}",
+                    }
+                )
             continue
 
         if decision.keep:
@@ -372,8 +380,8 @@ def collect_filtered_search_jobs(
     collected_jobs: list[dict[str, Any]] = dedupe_jobs(
         list(resume_payload.get("fetched_jobs", []) or [])
     )
-    pages_checked = 0
-    jobs_checked = 0
+    pages_checked = int(resume_payload.get("pages_checked", 0) or 0)
+    jobs_checked = len(collected_jobs)
     duplicate_count = 0
     filter_decisions = dict(resume_payload.get("filter_decisions", {}) or {})
     rejected_count = sum(
@@ -437,6 +445,7 @@ def collect_filtered_search_jobs(
     def remember_filter_result(payload: dict[str, Any]) -> None:
         job = dict(payload.get("job", {}) or {})
         key = _dedupe_key(job)
+        processed_keys.add(key)
         filter_decisions[key] = {
             "keep": bool(payload.get("keep")),
             "reason": str(payload.get("reason", "") or ""),
@@ -446,12 +455,35 @@ def collect_filtered_search_jobs(
                 filtered_jobs.append(job)
         checkpoint("filtering")
 
-    if resume_payload.get("phase") == "scoring" and filtered_jobs:
-        fresh_jobs = [
+    def fresh_filtered_jobs() -> list[dict[str, Any]]:
+        return [
             job
             for job in filtered_jobs
             if str(job.get("job_id") or job.get("url") or "").strip() not in seen_ids
         ]
+
+    def filter_pending_jobs(jobs: list[dict[str, Any]]) -> None:
+        nonlocal rejected_count, filtered_jobs
+        newly_filtered_jobs, batch_rejected_count = filter_jobs_against_request(
+            jobs,
+            target_industry=target_industry,
+            company=normalized_company,
+            job_level=normalized_level,
+            location=normalized_location,
+            posted_within=normalized_posted_within,
+            internship_timeframe=normalized_internship_timeframe,
+            is_canceled=is_canceled,
+            should_stop=should_stop,
+            on_filter_progress=on_filter_progress,
+            on_filter_result=remember_filter_result,
+        )
+        filtered_jobs.extend(newly_filtered_jobs)
+        filtered_jobs = dedupe_jobs(filtered_jobs)
+        rejected_count += batch_rejected_count
+        checkpoint("filtering")
+
+    if resume_payload.get("phase") == "scoring" and filtered_jobs:
+        fresh_jobs = fresh_filtered_jobs()
         return SearchFilterResult(
             jobs=fresh_jobs,
             search_keywords=search_keywords,
@@ -477,7 +509,32 @@ def collect_filtered_search_jobs(
             return True
         return False
 
-    for page_index in range(max_pages):
+    if resume_payload.get("phase") == "filtering" and collected_jobs:
+        pending_jobs = [
+            job for job in dedupe_jobs(collected_jobs) if _dedupe_key(job) not in filter_decisions
+        ]
+        filter_pending_jobs(pending_jobs)
+        fresh_jobs = fresh_filtered_jobs()
+        if len(fresh_jobs) >= minimum_jobs:
+            return SearchFilterResult(
+                jobs=fresh_jobs,
+                search_keywords=search_keywords,
+                location=normalized_location,
+                target_industry=target_industry,
+                company=normalized_company,
+                job_level=normalized_level,
+                posted_within=normalized_posted_within,
+                internship_timeframe=normalized_internship_timeframe,
+                pages_checked=pages_checked,
+                jobs_checked=len(collected_jobs),
+                scraped_count=len(collected_jobs),
+                duplicate_count=0,
+                rejected_count=rejected_count,
+                seen_count=len(filtered_jobs) - len(fresh_jobs),
+                no_match_timeout_triggered=False,
+            )
+
+    for page_index in range(pages_checked, max_pages):
         if callable(is_canceled) and is_canceled():
             raise RuntimeError("Search was canceled by user.")
         if should_stop():
@@ -519,23 +576,7 @@ def collect_filtered_search_jobs(
             processed_keys.add(key)
             new_jobs.append(job)
 
-        newly_filtered_jobs, page_rejected_count = filter_jobs_against_request(
-            new_jobs,
-            target_industry=target_industry,
-            company=normalized_company,
-            job_level=normalized_level,
-            location=normalized_location,
-            posted_within=normalized_posted_within,
-            internship_timeframe=normalized_internship_timeframe,
-            is_canceled=is_canceled,
-            should_stop=should_stop,
-            on_filter_progress=on_filter_progress,
-            on_filter_result=remember_filter_result,
-        )
-        filtered_jobs.extend(newly_filtered_jobs)
-        filtered_jobs = dedupe_jobs(filtered_jobs)
-        rejected_count += page_rejected_count
-        checkpoint("filtering")
+        filter_pending_jobs(new_jobs)
 
         fresh_jobs = []
         seen_count = 0

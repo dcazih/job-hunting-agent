@@ -85,6 +85,29 @@ const FETCHING_FALLBACK_WORDS = [
   "Searching",
   "Fetching",
 ];
+const FILTERING_FALLBACK_WORDS = [
+  "Sifting",
+  "Sorting",
+  "Screening",
+  "Trimming",
+  "Narrowing",
+  "Refining",
+  "Consolidating",
+  "Distilling",
+  "Separating",
+  "Selecting",
+  "Vetting",
+  "Pruning",
+  "Weeding",
+  "Filtering",
+  "Curating",
+  "Reviewing",
+  "Evaluating",
+  "Discerning",
+  "Focusing",
+  "Isolating",
+];
+const FILTERING_FALLBACK_ROTATE_MS = 11000;
 
 function normalizeSchedulePagesInput(value) {
   const trimmedValue = String(value || "").trim();
@@ -118,6 +141,15 @@ function getRandomFetchingFallback(exclude = "") {
 
   const filtered = FETCHING_FALLBACK_WORDS.filter((word) => word !== exclude);
   const pool = filtered.length > 0 ? filtered : FETCHING_FALLBACK_WORDS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function getRandomFilteringFallback(exclude = "") {
+  if (FILTERING_FALLBACK_WORDS.length === 0) {
+    return "Filtering";
+  }
+  const filtered = FILTERING_FALLBACK_WORDS.filter((word) => word !== exclude);
+  const pool = filtered.length > 0 ? filtered : FILTERING_FALLBACK_WORDS;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -741,6 +773,8 @@ export default function App() {
   const searchFetchFallbackRef = useRef("");
   const searchFetchJobKeyRef = useRef("");
   const searchFetchJobSinceRef = useRef(0);
+  const searchFilterFallbackRef = useRef("");
+  const searchFilterFallbackSinceRef = useRef(0);
   const bottomTextareaHeightRef = useRef(0);
   const touchPressedButtonRef = useRef(null);
   const searchStatusKey = searchDisplay.transitionKey || "idle";
@@ -952,6 +986,8 @@ export default function App() {
         searchFetchFallbackRef.current = getRandomFetchingFallback();
         searchFetchJobKeyRef.current = "";
         searchFetchJobSinceRef.current = 0;
+        searchFilterFallbackRef.current = "";
+        searchFilterFallbackSinceRef.current = 0;
       }
 
       if (step.includes("fetch") || phase === "fetching") {
@@ -980,10 +1016,17 @@ export default function App() {
       }
 
       if (step.includes("filter") || phase === "filtering") {
+        if (
+          !searchFilterFallbackRef.current
+          || now - searchFilterFallbackSinceRef.current >= FILTERING_FALLBACK_ROTATE_MS
+        ) {
+          searchFilterFallbackRef.current = getRandomFilteringFallback(searchFilterFallbackRef.current);
+          searchFilterFallbackSinceRef.current = now;
+        }
         return {
           transitionKey: "hunting",
           headline: "Hunting for Jobs...",
-          subline: "Filtering...",
+          subline: `${searchFilterFallbackRef.current}...`,
           shimmer: true,
         };
       }
